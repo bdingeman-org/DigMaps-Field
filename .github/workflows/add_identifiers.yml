@@ -1,0 +1,22 @@
+name: 2. Add Identifiers
+on:
+  workflow_dispatch:
+
+jobs:
+  identifiers:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Register App ID
+        env:
+          TEAMID: ${{ secrets.TEAMID }}
+          FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+          FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+          FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          bundle install
+          bundle exec fastlane identifiers

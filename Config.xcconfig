@@ -1,0 +1,11 @@
+// DigMaps Field build configuration.
+// DEVELOPER_TEAM_ID is injected by CI from the TEAMID secret (xcargs in the
+// Fastfile) — the placeholder below only matters for local Xcode builds.
+DEVELOPER_TEAM_ID = XXXXXXXXXX
+
+// Trio-style unique-per-team bundle id, so any fork builds without collisions.
+BUNDLE_IDENTIFIER = org.digmaps.$(DEVELOPER_TEAM_ID).field
+
+APP_DISPLAY_NAME = DigMaps Field
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1

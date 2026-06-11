@@ -1,0 +1,3 @@
+storage_mode("git")
+type("appstore")
+# git_url, auth and app_identifier are passed explicitly in the Fastfile lanes.
