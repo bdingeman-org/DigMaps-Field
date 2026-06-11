@@ -53,7 +53,7 @@ platform :ios do
     if existing
       UI.success("App ID #{BUNDLE_ID} already registered.")
     else
-      Spaceship::ConnectAPI::BundleId.create(name: "DigMaps Field", identifier: BUNDLE_ID)
+      Spaceship::ConnectAPI::BundleId.create(name: "DigMaps Field", identifier: BUNDLE_ID, platform: "IOS")
       UI.success("Registered App ID #{BUNDLE_ID}.")
     end
   end
