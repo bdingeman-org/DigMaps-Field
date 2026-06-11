@@ -34,8 +34,8 @@ struct MapScreen: View {
     @State private var failed = false
     /// Bumped to ask the representable to re-frame on the overlay bounds.
     @State private var fitToken = 0
-    /// Toggled to ask for follow-me tracking.
-    @State private var followToken = 0
+    /// 0 = free pan, 1 = follow, 2 = follow + heading arrow (v0.2)
+    @State private var trackMode = 0
 
     var body: some View {
         Group {
@@ -43,7 +43,7 @@ struct MapScreen: View {
                 ZStack(alignment: .bottom) {
                     HistoricMapView(
                         overlay: overlay, opacity: opacity,
-                        fitToken: fitToken, followToken: followToken
+                        fitToken: fitToken, trackMode: trackMode
                     )
                     .ignoresSafeArea(edges: .bottom)
                     controls
@@ -77,14 +77,20 @@ struct MapScreen: View {
             Slider(value: $opacity, in: 0...1)
             Image(systemName: "circle.fill")
             Divider().frame(height: 24)
-            Button { fitToken += 1 } label: {
+            Button {
+                fitToken += 1
+                trackMode = 0
+            } label: {
                 Image(systemName: "map")
             }
             .accessibilityLabel("Fit the old map on screen")
-            Button { followToken += 1 } label: {
-                Image(systemName: "location.fill")
+            Button {
+                trackMode = trackMode == 1 ? 2 : 1 // tap again for heading arrow
+            } label: {
+                Image(systemName: trackMode == 2 ? "location.north.line.fill" : "location.fill")
             }
-            .accessibilityLabel("Follow my location")
+            .foregroundStyle(trackMode > 0 ? Color.accentColor : Color.primary)
+            .accessibilityLabel(trackMode == 1 ? "Follow with heading" : "Follow my location")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -100,7 +106,7 @@ struct HistoricMapView: UIViewRepresentable {
     let overlay: MBTilesOverlay
     let opacity: Double
     let fitToken: Int
-    let followToken: Int
+    let trackMode: Int
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -130,9 +136,11 @@ struct HistoricMapView: UIViewRepresentable {
                 view.setRegion(region, animated: true)
             }
         }
-        if followToken != co.lastFollowToken {
-            co.lastFollowToken = followToken
-            view.setUserTrackingMode(.follow, animated: true)
+        if trackMode != co.lastTrackMode {
+            co.lastTrackMode = trackMode
+            let mode: MKUserTrackingMode = trackMode == 2 ? .followWithHeading
+                : trackMode == 1 ? .follow : .none
+            view.setUserTrackingMode(mode, animated: true)
         }
     }
 
@@ -142,7 +150,7 @@ struct HistoricMapView: UIViewRepresentable {
         /// before MapKit asked for the renderer).
         var pendingAlpha: CGFloat = 0.8
         var lastFitToken = 0
-        var lastFollowToken = 0
+        var lastTrackMode = 0
 
         func mapView(_ mapView: MKMapView,
                      rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
