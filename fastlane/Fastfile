@@ -56,6 +56,23 @@ platform :ios do
       Spaceship::ConnectAPI::BundleId.create(name: "DigMaps Field", identifier: BUNDLE_ID, platform: "IOS")
       UI.success("Registered App ID #{BUNDLE_ID}.")
     end
+
+    # the App Store Connect APP RECORD (what TestFlight uploads attach to)
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_ID)
+    if app
+      UI.success("ASC app record exists: #{app.name}")
+    else
+      Spaceship::ConnectAPI::App.create(
+        name: "DigMaps Field",
+        version_string: "0.1.0",
+        sku: "digmaps-field",
+        primary_locale: "en-US",
+        bundle_id: BUNDLE_ID,
+        platforms: ["IOS"],
+        company_name: nil
+      )
+      UI.success("Created ASC app record 'DigMaps Field'.")
+    end
   end
 
   desc "Build DigMaps Field and push it to TestFlight"
