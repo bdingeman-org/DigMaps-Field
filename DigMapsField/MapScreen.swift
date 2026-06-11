@@ -1,8 +1,8 @@
 //
 //  MapScreen.swift
-//  The whole point: an MKMapView (UIKit, because SwiftUI's Map can't do
-//  tile overlays) showing the baked historic map over a muted base, with
-//  the live GPS dot, an opacity slider, and follow/fit buttons.
+//  MKMapView (UIKit — SwiftUI's Map can't do tile overlays) showing either an
+//  imported MBTiles (offline) or an online XYZ source from the bundled catalog,
+//  with the GPS dot, opacity slider, fit/follow controls and v0.2 heading arrow.
 //
 
 import SwiftUI
@@ -13,29 +13,44 @@ import CoreLocation
 final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     @Published var denied = false
+    @Published var here: CLLocationCoordinate2D?
 
     override init() {
         super.init()
         manager.delegate = self
         manager.requestWhenInUseAuthorization()
+        manager.requestLocation()
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         denied = manager.authorizationStatus == .denied
             || manager.authorizationStatus == .restricted
+        if manager.authorizationStatus == .authorizedWhenInUse { manager.requestLocation() }
     }
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
+        here = locs.last?.coordinate
+    }
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
 }
 
 struct MapScreen: View {
-    let map: MapFile
+    let source: OverlaySource
+    /// Where "fit" flies (footprint bbox for online maps; MBTiles metadata otherwise).
+    var fitRegion: MKCoordinateRegion?
+
     @StateObject private var location = LocationManager()
     @State private var opacity = 0.8
-    @State private var overlay: MBTilesOverlay?
+    @State private var overlay: MKTileOverlay?
     @State private var failed = false
-    /// Bumped to ask the representable to re-frame on the overlay bounds.
     @State private var fitToken = 0
-    /// 0 = free pan, 1 = follow, 2 = follow + heading arrow (v0.2)
+    /// 0 = free pan, 1 = follow, 2 = follow + heading arrow
     @State private var trackMode = 0
+
+    private var resolvedFit: MKCoordinateRegion? {
+        if let fitRegion { return fitRegion }
+        if let mb = overlay as? MBTilesOverlay { return mb.boundsRegion }
+        return nil
+    }
 
     var body: some View {
         Group {
@@ -43,7 +58,7 @@ struct MapScreen: View {
                 ZStack(alignment: .bottom) {
                     HistoricMapView(
                         overlay: overlay, opacity: opacity,
-                        fitToken: fitToken, trackMode: trackMode
+                        fitRegion: resolvedFit, fitToken: fitToken, trackMode: trackMode
                     )
                     .ignoresSafeArea(edges: .bottom)
                     controls
@@ -58,11 +73,30 @@ struct MapScreen: View {
                 ProgressView()
             }
         }
-        .navigationTitle(map.name)
+        .navigationTitle(source.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if source.isOnline {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Image(systemName: "wifi")
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Streams tiles — needs signal")
+                }
+            }
+        }
         .task {
-            overlay = MBTilesOverlay(fileURL: map.url)
-            failed = overlay == nil
+            switch source {
+            case .mbtiles(let file):
+                overlay = MBTilesOverlay(fileURL: file.url)
+                failed = overlay == nil
+            case .xyz(_, let template, let attribution, let maxZ):
+                let o = MKTileOverlay(urlTemplate: template)
+                o.canReplaceMapContent = false
+                o.maximumZ = maxZ
+                o.tileSize = CGSize(width: 256, height: 256)
+                _ = attribution // shown on the web side; MapKit has no per-overlay credit line
+                overlay = o
+            }
         }
         .alert("Location is off", isPresented: $location.denied) {
             Button("OK", role: .cancel) {}
@@ -103,8 +137,9 @@ struct MapScreen: View {
 // MARK: - MKMapView wrapper
 
 struct HistoricMapView: UIViewRepresentable {
-    let overlay: MBTilesOverlay
+    let overlay: MKTileOverlay
     let opacity: Double
+    let fitRegion: MKCoordinateRegion?
     let fitToken: Int
     let trackMode: Int
 
@@ -119,7 +154,7 @@ struct HistoricMapView: UIViewRepresentable {
         view.showsScale = true
         view.pointOfInterestFilter = .excludingAll
         view.addOverlay(overlay, level: .aboveLabels)
-        if let region = overlay.boundsRegion {
+        if let region = fitRegion {
             view.setRegion(region, animated: false)
         }
         return view
@@ -132,7 +167,7 @@ struct HistoricMapView: UIViewRepresentable {
         if fitToken != co.lastFitToken {
             co.lastFitToken = fitToken
             view.setUserTrackingMode(.none, animated: false)
-            if let region = overlay.boundsRegion {
+            if let region = fitRegion {
                 view.setRegion(region, animated: true)
             }
         }
@@ -146,8 +181,6 @@ struct HistoricMapView: UIViewRepresentable {
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         var renderer: MKTileOverlayRenderer?
-        /// Alpha to apply when the renderer is first created (slider moved
-        /// before MapKit asked for the renderer).
         var pendingAlpha: CGFloat = 0.8
         var lastFitToken = 0
         var lastTrackMode = 0
