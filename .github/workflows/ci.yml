@@ -1,0 +1,27 @@
+name: CI compile check
+on:
+  push:
+    branches: ["dev/**"]
+  pull_request:
+
+jobs:
+  compile:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$XCODE" ] || { echo "::error::No Xcode 26"; exit 1; }
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Compile (no signing)
+        run: |
+          xcodebuild build \
+            -project DigMapsField.xcodeproj \
+            -scheme DigMapsField \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO | tail -40
