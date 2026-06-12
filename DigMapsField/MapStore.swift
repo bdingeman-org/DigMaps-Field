@@ -6,7 +6,7 @@
 
 import Foundation
 
-struct MapFile: Identifiable, Equatable {
+struct MapFile: Identifiable, Hashable {
     let url: URL
     var id: String { url.lastPathComponent }
     var name: String { url.deletingPathExtension().lastPathComponent }
