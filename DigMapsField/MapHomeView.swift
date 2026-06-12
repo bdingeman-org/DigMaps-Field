@@ -54,6 +54,7 @@ struct MapHomeView: View {
     @State private var aerialYear: CatalogAerial?
     @State private var selectedHist: CatalogHistoricMap?
 
+    @State private var viewRegion: MKCoordinateRegion?
     @State private var showHistSheet = false
     @State private var showFileSheet = false
     @State private var showImporter = false
@@ -117,7 +118,8 @@ struct MapHomeView: View {
             BaseMapView(
                 overlayKey: overlayKey, buildOverlay: buildOverlay,
                 opacity: opacity, satellite: basemapSat,
-                fitRegion: fitRegion, fitToken: fitToken, trackMode: trackMode
+                fitRegion: fitRegion, fitToken: fitToken, trackMode: trackMode,
+                onRegionChange: { viewRegion = $0 }
             )
             .ignoresSafeArea()
             VStack(spacing: 0) {
@@ -237,7 +239,7 @@ struct MapHomeView: View {
                     }
                 }
             case .hist:
-                chip(selectedHist.map { "\($0.yearLabel) · \($0.atlas)" } ?? "Pick a map near me…") {
+                chip(selectedHist.map { "\($0.yearLabel) · \($0.atlas)" } ?? "Pick a map in view…") {
                     showHistSheet = true
                 }
             }
@@ -261,10 +263,11 @@ struct MapHomeView: View {
     private var histSheet: some View {
         NavigationStack {
             List {
-                if let here = location.here, let catalog {
-                    let maps = catalog.historic(at: here)
+                if let catalog, viewRegion != nil || location.here != nil {
+                    let maps = viewRegion.map { catalog.historic(in: $0) }
+                        ?? catalog.historic(at: location.here!)
                     if maps.isEmpty {
-                        Text("No catalogued maps cover this spot.").foregroundStyle(.secondary)
+                        Text("No catalogued maps cover this view — pan the map.").foregroundStyle(.secondary)
                     }
                     ForEach(maps) { m in
                         Button {
@@ -283,7 +286,7 @@ struct MapHomeView: View {
                     Label("Waiting for location…", systemImage: "location")
                 }
             }
-            .navigationTitle("Historic maps near me")
+            .navigationTitle("Historic maps in view")
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium, .large])
@@ -329,12 +332,14 @@ struct BaseMapView: UIViewRepresentable {
     let fitRegion: MKCoordinateRegion?
     let fitToken: Int
     let trackMode: Int
+    var onRegionChange: ((MKCoordinateRegion) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> MKMapView {
         let view = MKMapView()
         view.delegate = context.coordinator
+        context.coordinator.onRegionChange = onRegionChange
         view.mapType = .mutedStandard
         view.showsUserLocation = true
         view.showsCompass = true
@@ -369,12 +374,23 @@ struct BaseMapView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
+        var onRegionChange: ((MKCoordinateRegion) -> Void)?
+        private var debounce: Timer?
         var currentKey = "none"
         var currentOverlay: MKTileOverlay?
         var renderer: MKTileOverlayRenderer?
         var pendingAlpha: CGFloat = 0.8
         var lastFitToken = 0
         var lastTrackMode = 0
+
+        func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+            // debounced like the web (400ms) so the list doesn't churn mid-pan
+            let region = mapView.region
+            debounce?.invalidate()
+            debounce = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
+                self?.onRegionChange?(region)
+            }
+        }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let tiles = overlay as? MKTileOverlay {
