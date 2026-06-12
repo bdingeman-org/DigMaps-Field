@@ -22,6 +22,12 @@
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Fonts/Archivo-ExtraBold.ttf</string>
+		<string>Fonts/JetBrainsMono-Regular.ttf</string>
+		<string>Fonts/JetBrainsMono-Bold.ttf</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
