@@ -42,6 +42,7 @@ private let NYS_HILLSHADE = "https://elevation.its.ny.gov/arcgis/rest/services/N
 struct MapHomeView: View {
     @EnvironmentObject private var store: MapStore
     @StateObject private var location = LocationManager()
+    @StateObject private var search = PlaceSearch()
 
     @State private var src: SrcKind = .oldmap
     @State private var overlayOn = false          // eye — off by default, like web
@@ -55,6 +56,9 @@ struct MapHomeView: View {
     @State private var selectedHist: CatalogHistoricMap?
 
     @State private var viewRegion: MKCoordinateRegion?
+    @State private var searchPin: CLLocationCoordinate2D?
+    @State private var searchToken = 0
+    @FocusState private var searchFieldFocused: Bool
     @State private var showHistSheet = false
     @State private var showFileSheet = false
     @State private var showImporter = false
@@ -119,7 +123,8 @@ struct MapHomeView: View {
                 overlayKey: overlayKey, buildOverlay: buildOverlay,
                 opacity: opacity, satellite: basemapSat,
                 fitRegion: fitRegion, fitToken: fitToken, trackMode: trackMode,
-                onRegionChange: { viewRegion = $0 }
+                searchPin: searchPin, searchToken: searchToken,
+                onRegionChange: { viewRegion = $0; search.updateRegion($0) }
             )
             .ignoresSafeArea()
             VStack(spacing: 0) {
@@ -148,18 +153,96 @@ struct MapHomeView: View {
     // MARK: chrome
 
     private var header: some View {
-        HStack(spacing: 8) {
-            CoilMark(size: 21)
-            Wordmark(size: 15)
-            Spacer()
-            Button { basemapSat.toggle() } label: {
-                Image(systemName: basemapSat ? "globe.americas.fill" : "circle.lefthalf.filled")
-                    .foregroundStyle(Workshop.gold)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                CoilMark(size: 21)
+                Wordmark(size: 15)
+                Spacer()
+                Button { basemapSat.toggle() } label: {
+                    Image(systemName: basemapSat ? "globe.americas.fill" : "circle.lefthalf.filled")
+                        .foregroundStyle(Workshop.gold)
+                }
+                .accessibilityLabel("Toggle satellite basemap")
             }
-            .accessibilityLabel("Toggle satellite basemap")
+            .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 6)
+            searchBar
         }
-        .padding(.horizontal, 14).padding(.vertical, 8)
         .background(Workshop.band.opacity(0.92))
+    }
+
+    // MARK: search (web "Jump to place" parity)
+
+    private var searchBar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(Workshop.creamDim)
+                TextField("Jump to place or lat, lng", text: $search.query)
+                    .font(Workshop.mono(13)).foregroundStyle(Workshop.cream)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .focused($searchFieldFocused)
+                    .onChange(of: search.query) { _, v in search.update(v) }
+                    .onSubmit(runSearch)
+                if !search.query.isEmpty {
+                    Button { search.clear(); searchPin = nil } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Workshop.creamDim)
+                    }
+                    .accessibilityLabel("Clear search")
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(Workshop.panel, in: RoundedRectangle(cornerRadius: 9))
+            .padding(.horizontal, 12).padding(.bottom, 8)
+
+            if let st = search.status, search.completions.isEmpty {
+                Text(st).font(Workshop.mono(10)).foregroundStyle(Workshop.creamDim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18).padding(.bottom, 6)
+            }
+            if !search.completions.isEmpty {
+                suggestList
+            }
+        }
+    }
+
+    private var suggestList: some View {
+        VStack(spacing: 0) {
+            ForEach(search.completions.prefix(6), id: \.self) { c in
+                Button { pick(c) } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(c.title).font(Workshop.monoBold(12)).foregroundStyle(Workshop.cream)
+                        if !c.subtitle.isEmpty {
+                            Text(c.subtitle).font(Workshop.mono(10)).foregroundStyle(Workshop.creamDim)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 7)
+                }
+                Divider().overlay(Workshop.panel)
+            }
+        }
+        .background(Workshop.band)
+        .padding(.bottom, 6)
+    }
+
+    private func runSearch() {
+        if let c = search.coordinateJump {
+            jump(to: c, label: String(format: "%.5f, %.5f", c.latitude, c.longitude))
+            return
+        }
+        search.resolve(nil) { hit in if let hit { jump(to: hit.coordinate, label: hit.title) } }
+    }
+    private func pick(_ c: MKLocalSearchCompletion) {
+        search.resolve(c) { hit in if let hit { jump(to: hit.coordinate, label: hit.title) } }
+    }
+    private func jump(to c: CLLocationCoordinate2D, label: String) {
+        searchPin = c
+        searchToken += 1
+        trackMode = 0
+        search.completions = []
+        search.status = "Found: " + label
+        searchFieldFocused = false
     }
 
     private var panel: some View {
@@ -332,6 +415,8 @@ struct BaseMapView: UIViewRepresentable {
     let fitRegion: MKCoordinateRegion?
     let fitToken: Int
     let trackMode: Int
+    var searchPin: CLLocationCoordinate2D? = nil
+    var searchToken: Int = 0
     var onRegionChange: ((MKCoordinateRegion) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -371,6 +456,19 @@ struct BaseMapView: UIViewRepresentable {
                 : trackMode == 1 ? .follow : .none
             view.setUserTrackingMode(mode, animated: true)
         }
+        if searchToken != co.lastSearchToken {
+            co.lastSearchToken = searchToken
+            if let c = searchPin {
+                if let old = co.searchAnnotation { view.removeAnnotation(old) }
+                let a = MKPointAnnotation(); a.coordinate = c
+                co.searchAnnotation = a
+                view.addAnnotation(a)
+                view.setRegion(MKCoordinateRegion(center: c,
+                    span: MKCoordinateSpan(latitudeDelta: 0.04, longitudeDelta: 0.04)), animated: true)
+            } else if let old = co.searchAnnotation {
+                view.removeAnnotation(old); co.searchAnnotation = nil
+            }
+        }
     }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
@@ -382,6 +480,8 @@ struct BaseMapView: UIViewRepresentable {
         var pendingAlpha: CGFloat = 0.8
         var lastFitToken = 0
         var lastTrackMode = 0
+        var lastSearchToken = 0
+        var searchAnnotation: MKPointAnnotation?
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             // debounced like the web (400ms) so the list doesn't churn mid-pan
@@ -390,6 +490,17 @@ struct BaseMapView: UIViewRepresentable {
             debounce = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
                 self?.onRegionChange?(region)
             }
+        }
+
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if annotation is MKUserLocation { return nil }
+            let id = "searchPin"
+            let v = (mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKMarkerAnnotationView)
+                ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
+            v.markerTintColor = UIColor(red: 0xb8/255.0, green: 0x86/255.0, blue: 0x2c/255.0, alpha: 1) // Workshop.gold
+            v.glyphImage = UIImage(systemName: "mappin")
+            v.annotation = annotation
+            return v
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
