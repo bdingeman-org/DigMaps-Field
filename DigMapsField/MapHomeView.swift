@@ -38,7 +38,6 @@ enum SrcKind: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-private let NYS_HILLSHADE = "https://elevation.its.ny.gov/arcgis/rest/services/NYS_Statewide_Hillshade/MapServer"
 
 struct MapHomeView: View {
     @EnvironmentObject private var store: MapStore
@@ -83,21 +82,15 @@ struct MapHomeView: View {
         switch src {
         case .oldmap:
             guard let f = selectedFile ?? store.maps.first else { return nil }
-            return MBTilesOverlay(fileURL: f.url)
+            return OverlayFactory.mbtiles(f)
         case .lidar:
-            return EsriExportOverlay(exportBase: NYS_HILLSHADE)
+            return OverlayFactory.hillshade()
         case .aerial:
             guard let a = aerialYear ?? catalog?.aerials["NYS orthos"]?.last else { return nil }
-            let o = MKTileOverlay(urlTemplate: a.template)
-            o.canReplaceMapContent = false
-            o.maximumZ = a.maxZ
-            return o
+            return OverlayFactory.aerial(a)
         case .hist:
             guard let m = selectedHist, let catalog else { return nil }
-            let o = MKTileOverlay(urlTemplate: catalog.template(for: m))
-            o.canReplaceMapContent = false
-            o.maximumZ = 16
-            return o
+            return OverlayFactory.historic(m, catalog: catalog)
         }
     }
 
