@@ -9,6 +9,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import UIKit
 
 /// Asks for when-in-use authorization; MKMapView draws the blue dot itself.
 final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
@@ -228,7 +229,7 @@ struct MapHomeView: View {
 
     private func runSearch() {
         search.dismissSuggestions()
-        searchFieldFocused = false
+        dismissKeyboard()
         if let c = search.coordinateJump {
             jump(to: c, label: String(format: "%.5f, %.5f", c.latitude, c.longitude))
             return
@@ -239,16 +240,21 @@ struct MapHomeView: View {
         // collapse the suggestion list and keyboard the instant the row is tapped,
         // before the async resolve returns (otherwise the list lingers / reopens)
         search.dismissSuggestions()
-        searchFieldFocused = false
+        dismissKeyboard()
         search.resolve(c) { hit in if let hit { jump(to: hit.coordinate, label: hit.title) } }
     }
+    private func dismissKeyboard() {
+        searchFieldFocused = false
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
     private func jump(to c: CLLocationCoordinate2D, label: String) {
+        search.dismissSuggestions()   // suppress any late completer result + clear list
         searchPin = c
         searchToken += 1
         trackMode = 0
-        search.completions = []
         search.status = "Found: " + label
-        searchFieldFocused = false
+        dismissKeyboard()
     }
 
     private var panel: some View {

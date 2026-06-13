@@ -95,15 +95,18 @@ final class PlaceSearch: NSObject, ObservableObject, MKLocalSearchCompleterDeleg
         }
         if let region { request.region = region }
         MKLocalSearch(request: request).start { resp, _ in
-            guard let item = resp?.mapItems.first else {
-                Task { @MainActor in self.status = "No match — try a fuller name." }
-                completionHandler(nil)
-                return
+            let item = resp?.mapItems.first
+            Task { @MainActor in
+                guard let item else {
+                    self.status = "No match — try a fuller name."
+                    completionHandler(nil)
+                    return
+                }
+                let c = item.placemark.coordinate
+                let title = completion?.title ?? item.name ?? "Result"
+                let sub = completion?.subtitle ?? item.placemark.title ?? ""
+                completionHandler(SearchHit(title: title, subtitle: sub, coordinate: c))
             }
-            let c = item.placemark.coordinate
-            let title = completion?.title ?? item.name ?? "Result"
-            let sub = completion?.subtitle ?? item.placemark.title ?? ""
-            completionHandler(SearchHit(title: title, subtitle: sub, coordinate: c))
         }
     }
 
