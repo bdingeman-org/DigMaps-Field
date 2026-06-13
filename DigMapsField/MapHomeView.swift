@@ -227,6 +227,8 @@ struct MapHomeView: View {
     }
 
     private func runSearch() {
+        search.dismissSuggestions()
+        searchFieldFocused = false
         if let c = search.coordinateJump {
             jump(to: c, label: String(format: "%.5f, %.5f", c.latitude, c.longitude))
             return
@@ -234,6 +236,10 @@ struct MapHomeView: View {
         search.resolve(nil) { hit in if let hit { jump(to: hit.coordinate, label: hit.title) } }
     }
     private func pick(_ c: MKLocalSearchCompletion) {
+        // collapse the suggestion list and keyboard the instant the row is tapped,
+        // before the async resolve returns (otherwise the list lingers / reopens)
+        search.dismissSuggestions()
+        searchFieldFocused = false
         search.resolve(c) { hit in if let hit { jump(to: hit.coordinate, label: hit.title) } }
     }
     private func jump(to c: CLLocationCoordinate2D, label: String) {
