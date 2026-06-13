@@ -30,6 +30,9 @@ final class PlaceSearch: NSObject, ObservableObject, MKLocalSearchCompleterDeleg
 
     private let completer = MKLocalSearchCompleter()
     private var region: MKCoordinateRegion?
+    /// True between a pick/jump and the next keystroke — late async completer
+    /// results that arrive after selection must NOT reopen the suggestion list.
+    private var suppressed = false
 
     override init() {
         super.init()
@@ -45,6 +48,7 @@ final class PlaceSearch: NSObject, ObservableObject, MKLocalSearchCompleterDeleg
 
     /// Called as the user types. Mirrors the web's 3-char threshold + coord guard.
     func update(_ text: String) {
+        suppressed = false
         query = text
         coordinateJump = nil
         let q = text.trimmingCharacters(in: .whitespaces)
@@ -64,10 +68,19 @@ final class PlaceSearch: NSObject, ObservableObject, MKLocalSearchCompleterDeleg
     }
 
     func clear() {
+        suppressed = true
         query = ""
         completions = []
         coordinateJump = nil
         status = nil
+        completer.queryFragment = ""
+    }
+
+    /// Called the instant a suggestion is tapped: collapse the list now and
+    /// silence the completer so its in-flight result can't reopen it.
+    func dismissSuggestions() {
+        suppressed = true
+        completions = []
         completer.queryFragment = ""
     }
 
@@ -98,7 +111,10 @@ final class PlaceSearch: NSObject, ObservableObject, MKLocalSearchCompleterDeleg
 
     nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         let results = completer.results
-        Task { @MainActor in self.completions = results }
+        Task { @MainActor in
+            guard !self.suppressed else { return }
+            self.completions = results
+        }
     }
     nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
         Task { @MainActor in self.completions = [] }
