@@ -13,14 +13,22 @@ import SwiftUI
 @main
 struct DigMapsFieldApp: App {
     @StateObject private var store = MapStore()
+    @StateObject private var routes = RouteStore()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
-                // AirDrop / Files "Open with DigMaps Field" lands here
+                .environmentObject(routes)
+                // AirDrop / Files "Open with DigMaps Field" lands here —
+                // GPX/GeoJSON tracks go to the route library, everything else
+                // (MBTiles) to the map library.
                 .onOpenURL { url in
-                    store.importMap(from: url)
+                    if ["gpx", "geojson", "json"].contains(url.pathExtension.lowercased()) {
+                        routes.importRoute(from: url)
+                    } else {
+                        store.importMap(from: url)
+                    }
                 }
         }
     }

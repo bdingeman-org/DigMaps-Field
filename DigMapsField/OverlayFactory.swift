@@ -7,8 +7,21 @@
 
 import Foundation
 import MapKit
+import UIKit
 
 enum OverlayFactory {
+    /// Workshop gold — the route line, identical on phone and CarPlay.
+    static let routeColor = UIColor(red: 0xb8/255.0, green: 0x86/255.0, blue: 0x2c/255.0, alpha: 0.9)
+
+    static func routeRenderer(for polyline: MKPolyline) -> MKPolylineRenderer {
+        let r = MKPolylineRenderer(polyline: polyline)
+        r.strokeColor = routeColor
+        r.lineWidth = 5
+        r.lineCap = .round
+        r.lineJoin = .round
+        return r
+    }
+
     /// NYS Statewide Hillshade MapServer (no tile cache — served via /export).
     static let nysHillshade =
         "https://elevation.its.ny.gov/arcgis/rest/services/NYS_Statewide_Hillshade/MapServer"

@@ -10,6 +10,7 @@ import SwiftUI
 import MapKit
 import CoreLocation
 import UIKit
+import UniformTypeIdentifiers
 
 /// Asks for when-in-use authorization; MKMapView draws the blue dot itself.
 final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
@@ -20,12 +21,16 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     override init() {
         super.init()
         manager.delegate = self
+        manager.distanceFilter = 10   // meters — enough to keep route progress live without churn
         manager.requestWhenInUseAuthorization()
         manager.requestLocation()
     }
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         denied = manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted
-        if manager.authorizationStatus == .authorizedWhenInUse { manager.requestLocation() }
+        if manager.authorizationStatus == .authorizedWhenInUse {
+            manager.requestLocation()
+            manager.startUpdatingLocation()   // stream fixes so "distance left" updates while moving
+        }
     }
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
         here = locs.last?.coordinate
@@ -41,6 +46,7 @@ enum SrcKind: String, CaseIterable, Identifiable {
 
 struct MapHomeView: View {
     @EnvironmentObject private var store: MapStore
+    @EnvironmentObject private var routes: RouteStore
     @StateObject private var location = LocationManager()
     @StateObject private var search = PlaceSearch()
 
@@ -63,7 +69,38 @@ struct MapHomeView: View {
     @State private var showFileSheet = false
     @State private var showImporter = false
 
+    // route following
+    @State private var routeOn = true
+    @State private var activeRoute: Route?
+    @State private var routeProgress: RouteProgress?
+    @State private var routeFitToken = 0
+    @State private var showRouteSheet = false
+    @State private var showRouteImporter = false
+
     private var catalog: OverlayCatalog? { OverlayCatalog.shared }
+
+    private var routeTypes: [UTType] {
+        var t: [UTType] = [.json, .xml]
+        if let gpx = UTType(filenameExtension: "gpx") { t.append(gpx) }
+        if let geo = UTType(filenameExtension: "geojson") { t.append(geo) }
+        return t
+    }
+
+    private var routeKey: String {
+        (routeOn && activeRoute != nil) ? "route-" + (routes.activeRouteID ?? "none") : "none"
+    }
+    private var routeCoords: [CLLocationCoordinate2D]? {
+        (routeOn ? activeRoute : nil)?.coordinates
+    }
+    private func reloadActiveRoute() {
+        activeRoute = routes.activeRoute()
+        if let h = location.here, let r = activeRoute { routeProgress = r.progress(at: h) }
+        else { routeProgress = nil }
+    }
+    private func fmt(_ m: CLLocationDistance) -> String {
+        let f = MKDistanceFormatter(); f.unitStyle = .abbreviated
+        return f.string(fromDistance: m)
+    }
 
     // MARK: current overlay
 
@@ -118,6 +155,7 @@ struct MapHomeView: View {
                 opacity: opacity, satellite: basemapSat,
                 fitRegion: fitRegion, fitToken: fitToken, trackMode: trackMode,
                 searchPin: searchPin, searchToken: searchToken,
+                routeCoords: routeCoords, routeKey: routeKey, routeFitToken: routeFitToken,
                 onRegionChange: { viewRegion = $0; search.updateRegion($0) }
             )
             .ignoresSafeArea()
@@ -127,7 +165,6 @@ struct MapHomeView: View {
                 panel
             }
         }
-        .onOpenURL { store.importMap(from: $0) }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [.data], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result {
@@ -135,13 +172,27 @@ struct MapHomeView: View {
                 if selectedFile == nil { selectedFile = store.maps.first }
             }
         }
+        .fileImporter(isPresented: $showRouteImporter,
+                      allowedContentTypes: routeTypes, allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result {
+                for url in urls { routes.importRoute(from: url) }
+                reloadActiveRoute()
+            }
+        }
         .sheet(isPresented: $showHistSheet) { histSheet }
         .sheet(isPresented: $showFileSheet) { fileSheet }
+        .sheet(isPresented: $showRouteSheet) { routeSheet }
         .alert("Import failed", isPresented: Binding(
-            get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })) {
+            get: { store.lastError != nil || routes.lastError != nil },
+            set: { if !$0 { store.lastError = nil; routes.lastError = nil } })) {
             Button("OK", role: .cancel) {}
-        } message: { Text(store.lastError ?? "") }
+        } message: { Text(store.lastError ?? routes.lastError ?? "") }
         .preferredColorScheme(.dark)
+        .onAppear(perform: reloadActiveRoute)
+        .onChange(of: routes.activeRouteID) { _, _ in reloadActiveRoute() }
+        .onReceive(location.$here.compactMap { $0 }) { h in
+            if let r = activeRoute { routeProgress = r.progress(at: h) }
+        }
     }
 
     // MARK: chrome
@@ -252,6 +303,7 @@ struct MapHomeView: View {
 
     private var panel: some View {
         VStack(spacing: 10) {
+            routeBar
             // source switch — the web's .srcswitch
             HStack(spacing: 4) {
                 ForEach(SrcKind.allCases) { k in
@@ -296,6 +348,11 @@ struct MapHomeView: View {
                         .foregroundStyle(trackMode > 0 ? Workshop.glow : Workshop.creamDim)
                 }
                 .accessibilityLabel("Follow my location")
+                Button { showRouteSheet = true } label: {
+                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up\(activeRoute != nil ? ".fill" : "")")
+                        .foregroundStyle(activeRoute != nil && routeOn ? Workshop.glow : Workshop.creamDim)
+                }
+                .accessibilityLabel("Routes")
             }
         }
         .padding(12)
@@ -344,6 +401,41 @@ struct MapHomeView: View {
             .padding(.horizontal, 9).padding(.vertical, 5)
             .background(Workshop.panel, in: Capsule())
             .foregroundStyle(Workshop.cream)
+    }
+
+    // MARK: route bar (shown only when a route is loaded)
+
+    @ViewBuilder
+    private var routeBar: some View {
+        if let r = activeRoute {
+            HStack(spacing: 8) {
+                Button { routeOn.toggle() } label: {
+                    Image(systemName: routeOn ? "point.topleft.down.curvedto.point.bottomright.up.fill"
+                                              : "point.topleft.down.curvedto.point.bottomright.up")
+                        .foregroundStyle(routeOn ? Workshop.glow : Workshop.creamDim)
+                }
+                .accessibilityLabel("Toggle route")
+                Text(r.name).font(Workshop.monoBold(12)).foregroundStyle(Workshop.cream).lineLimit(1)
+                Spacer(minLength: 6)
+                if let p = routeProgress, routeOn {
+                    if p.offRoute > 60 {
+                        Text("⚠︎ \(fmt(p.offRoute)) off")
+                            .font(Workshop.mono(10)).foregroundStyle(Workshop.gold)
+                    } else {
+                        Text("\(fmt(p.remaining)) left · \(Int(p.fraction * 100))%")
+                            .font(Workshop.mono(10)).foregroundStyle(Workshop.creamDim)
+                    }
+                } else {
+                    Text(fmt(r.totalMeters))
+                        .font(Workshop.mono(10)).foregroundStyle(Workshop.creamDim)
+                }
+                Button { routeFitToken += 1; trackMode = 0 } label: {
+                    Image(systemName: "scope").foregroundStyle(Workshop.creamDim)
+                }
+                .accessibilityLabel("Fit route")
+            }
+            .padding(.horizontal, 4)
+        }
     }
 
     // MARK: sheets
@@ -408,6 +500,50 @@ struct MapHomeView: View {
         }
         .presentationDetents([.medium])
     }
+
+    private var routeSheet: some View {
+        NavigationStack {
+            List {
+                if routes.routes.isEmpty {
+                    Text("No routes yet. Import a GPX or GeoJSON track you recorded — DigMaps Field draws it and shows how far along it you are.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(routes.routes) { f in
+                    Button {
+                        routes.activeRouteID = f.id
+                        routeOn = true
+                        reloadActiveRoute()
+                        routeFitToken += 1
+                        showRouteSheet = false
+                    } label: {
+                        HStack {
+                            Image(systemName: routes.activeRouteID == f.id ? "largecircle.fill.circle" : "circle")
+                                .foregroundStyle(routes.activeRouteID == f.id ? Workshop.gold : Workshop.creamDim)
+                            Text(f.name).foregroundStyle(Workshop.cream)
+                        }
+                    }
+                }
+                .onDelete { idx in
+                    for f in idx.map({ routes.routes[$0] }) { routes.delete(f) }
+                    reloadActiveRoute()
+                }
+                if routes.activeRouteID != nil {
+                    Button(role: .destructive) {
+                        routes.activeRouteID = nil
+                        reloadActiveRoute()
+                    } label: {
+                        Label("Stop following", systemImage: "xmark.circle")
+                    }
+                }
+                Button { showRouteSheet = false; showRouteImporter = true } label: {
+                    Label("Import a track…", systemImage: "plus")
+                }
+            }
+            .navigationTitle("Routes")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium])
+    }
 }
 
 // MARK: - MKMapView wrapper (overlay swapping + basemap)
@@ -422,6 +558,9 @@ struct BaseMapView: UIViewRepresentable {
     let trackMode: Int
     var searchPin: CLLocationCoordinate2D? = nil
     var searchToken: Int = 0
+    var routeCoords: [CLLocationCoordinate2D]? = nil
+    var routeKey: String = "none"
+    var routeFitToken: Int = 0
     var onRegionChange: ((MKCoordinateRegion) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -447,9 +586,29 @@ struct BaseMapView: UIViewRepresentable {
             co.renderer = nil
             co.currentOverlay = buildOverlay()
             if let o = co.currentOverlay { view.addOverlay(o, level: .aboveLabels) }
+            // keep the route line above freshly re-added tiles
+            if let pl = co.routeOverlay { view.removeOverlay(pl); view.addOverlay(pl, level: .aboveLabels) }
         }
         co.renderer?.alpha = CGFloat(opacity)
         co.pendingAlpha = CGFloat(opacity)
+        if routeKey != co.routeKey {
+            co.routeKey = routeKey
+            if let old = co.routeOverlay { view.removeOverlay(old); co.routeOverlay = nil }
+            if let cs = routeCoords, cs.count >= 2 {
+                let pl = MKPolyline(coordinates: cs, count: cs.count)
+                co.routeOverlay = pl
+                view.addOverlay(pl, level: .aboveLabels)
+            }
+        }
+        if routeFitToken != co.lastRouteFitToken {
+            co.lastRouteFitToken = routeFitToken
+            if let pl = co.routeOverlay {
+                view.setUserTrackingMode(.none, animated: false)
+                view.setVisibleMapRect(pl.boundingMapRect,
+                    edgePadding: UIEdgeInsets(top: 80, left: 40, bottom: 220, right: 40),
+                    animated: true)
+            }
+        }
         if fitToken != co.lastFitToken {
             co.lastFitToken = fitToken
             view.setUserTrackingMode(.none, animated: false)
@@ -487,6 +646,9 @@ struct BaseMapView: UIViewRepresentable {
         var lastTrackMode = 0
         var lastSearchToken = 0
         var searchAnnotation: MKPointAnnotation?
+        var routeOverlay: MKPolyline?
+        var routeKey = "none"
+        var lastRouteFitToken = 0
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             // debounced like the web (400ms) so the list doesn't churn mid-pan
@@ -509,6 +671,9 @@ struct BaseMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let line = overlay as? MKPolyline {
+                return OverlayFactory.routeRenderer(for: line)
+            }
             if let tiles = overlay as? MKTileOverlay {
                 let r = MKTileOverlayRenderer(tileOverlay: tiles)
                 r.alpha = pendingAlpha
