@@ -62,6 +62,7 @@ struct MapHomeView: View {
 
     @State private var selectedFile: MapFile?
     @State private var aerialPick: AerialPick?
+    @State private var aerialHistInView: [HistoricAerial] = []  // historic aerials covering the current map center
     @State private var lidarSource: HillshadeSource = .state
     @State private var selectedHist: CatalogHistoricMap?
 
@@ -163,7 +164,11 @@ struct MapHomeView: View {
                 fitRegion: fitRegion, fitToken: fitToken, trackMode: trackMode,
                 searchPin: searchPin, searchToken: searchToken,
                 routeCoords: routeCoords, routeKey: routeKey, routeFitToken: routeFitToken,
-                onRegionChange: { viewRegion = $0; search.updateRegion($0) }
+                onRegionChange: {
+                    viewRegion = $0
+                    aerialHistInView = HistoricAerial.forCenter($0.center)
+                    search.updateRegion($0)
+                }
             )
             .ignoresSafeArea()
             VStack(spacing: 0) {
@@ -402,17 +407,17 @@ struct MapHomeView: View {
                 Text("· online").font(Workshop.mono(11)).foregroundStyle(Workshop.creamDim)
             case .aerial:
                 Menu {
-                    if let years = catalog?.aerials["NYS orthos"] {
-                        ForEach(years) { a in
-                            Button(a.name) { aerialPick = .modern(a); overlayOn = true }
+                    if !aerialHistInView.isEmpty {
+                        Section("Historic aerials here") {
+                            ForEach(aerialHistInView) { h in
+                                Button(h.label) { aerialPick = .historic(h); overlayOn = true }
+                            }
                         }
                     }
-                    if let c = viewRegion?.center ?? location.here {
-                        let hist = HistoricAerial.forCenter(c)
-                        if !hist.isEmpty {
-                            Divider()
-                            ForEach(hist) { h in
-                                Button(h.label) { aerialPick = .historic(h); overlayOn = true }
+                    if let years = catalog?.aerials["NYS orthos"] {
+                        Section("NYS orthoimagery") {
+                            ForEach(years) { a in
+                                Button(a.name) { aerialPick = .modern(a); overlayOn = true }
                             }
                         }
                     }
