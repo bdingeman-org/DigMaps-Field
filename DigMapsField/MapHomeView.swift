@@ -59,6 +59,7 @@ struct MapHomeView: View {
 
     @State private var selectedFile: MapFile?
     @State private var aerialYear: CatalogAerial?
+    @State private var lidarSource: HillshadeSource = .state
     @State private var selectedHist: CatalogHistoricMap?
 
     @State private var viewRegion: MKCoordinateRegion?
@@ -108,7 +109,7 @@ struct MapHomeView: View {
         guard overlayOn else { return "none" }
         switch src {
         case .oldmap: return "file-" + (selectedFile?.id ?? "none")
-        case .lidar:  return "lidar"
+        case .lidar:  return "lidar-" + lidarSource.rawValue
         case .aerial: return "aerial-" + (aerialYear?.id ?? "none")
         case .hist:   return "hist-" + (selectedHist?.id ?? "none")
         }
@@ -121,7 +122,7 @@ struct MapHomeView: View {
             guard let f = selectedFile ?? store.maps.first else { return nil }
             return OverlayFactory.mbtiles(f)
         case .lidar:
-            return OverlayFactory.hillshade()
+            return OverlayFactory.hillshade(lidarSource)
         case .aerial:
             guard let a = aerialYear ?? catalog?.aerials["NYS orthos"]?.last else { return nil }
             return OverlayFactory.aerial(a)
@@ -371,8 +372,14 @@ struct MapHomeView: View {
                     chip("Import an MBTiles…") { showImporter = true }
                 }
             case .lidar:
-                Text("USGS 3DEP hillshade · online")
-                    .font(Workshop.mono(11)).foregroundStyle(Workshop.creamDim)
+                Menu {
+                    ForEach(HillshadeSource.allCases) { s in
+                        Button(s.rawValue) { lidarSource = s; overlayOn = true }
+                    }
+                } label: {
+                    chipLabel("Source: " + lidarSource.rawValue)
+                }
+                Text("· online").font(Workshop.mono(11)).foregroundStyle(Workshop.creamDim)
             case .aerial:
                 if let years = catalog?.aerials["NYS orthos"] {
                     Menu {
