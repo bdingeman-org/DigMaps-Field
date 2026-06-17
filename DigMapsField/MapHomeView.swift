@@ -63,6 +63,7 @@ struct MapHomeView: View {
     @State private var selectedFile: MapFile?
     @State private var aerialPick: AerialPick?
     @State private var aerialHistInView: [HistoricAerial] = []  // historic aerials covering the current map center
+    @State private var histInView: [CatalogHistoricMap] = []    // catalogued old maps covering the current map viewport
     @State private var lidarSource: HillshadeSource = .state
     @State private var selectedHist: CatalogHistoricMap?
 
@@ -167,6 +168,7 @@ struct MapHomeView: View {
                 onRegionChange: {
                     viewRegion = $0
                     aerialHistInView = HistoricAerial.forCenter($0.center)
+                    histInView = OverlayCatalog.shared?.historic(in: $0) ?? []
                     search.updateRegion($0)
                 }
             )
@@ -484,27 +486,23 @@ struct MapHomeView: View {
     private var histSheet: some View {
         NavigationStack {
             List {
-                if let catalog, viewRegion != nil || location.here != nil {
-                    let maps = viewRegion.map { catalog.historic(in: $0) }
-                        ?? catalog.historic(at: location.here!)
-                    if maps.isEmpty {
-                        Text("No catalogued maps cover this view — pan the map.").foregroundStyle(.secondary)
-                    }
-                    ForEach(maps) { m in
-                        Button {
-                            selectedHist = m; overlayOn = true; fitToken += 1; showHistSheet = false
-                        } label: {
-                            HStack {
-                                Text(m.yearLabel).font(Workshop.monoBold(14)).foregroundStyle(Workshop.gold)
-                                VStack(alignment: .leading) {
-                                    Text(m.atlas).foregroundStyle(Workshop.cream).lineLimit(1)
-                                    Text("\(m.src) · online").font(.caption).foregroundStyle(Workshop.creamDim)
-                                }
+                // Driven only by the current map viewport (recomputed on every pan),
+                // never by GPS — so entries never appear that aren't in view.
+                if histInView.isEmpty {
+                    Text("No catalogued maps cover this view — pan the map.").foregroundStyle(.secondary)
+                }
+                ForEach(histInView) { m in
+                    Button {
+                        selectedHist = m; overlayOn = true; fitToken += 1; showHistSheet = false
+                    } label: {
+                        HStack {
+                            Text(m.yearLabel).font(Workshop.monoBold(14)).foregroundStyle(Workshop.gold)
+                            VStack(alignment: .leading) {
+                                Text(m.atlas).foregroundStyle(Workshop.cream).lineLimit(1)
+                                Text("\(m.src) · online").font(.caption).foregroundStyle(Workshop.creamDim)
                             }
                         }
                     }
-                } else {
-                    Label("Waiting for location…", systemImage: "location")
                 }
             }
             .navigationTitle("Historic maps in view")
@@ -693,10 +691,12 @@ struct BaseMapView: UIViewRepresentable {
         var didInitialFit = false
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
-            // debounced like the web (400ms) so the list doesn't churn mid-pan
+            // Short debounce: just coalesce rapid momentum fires. Kept brief so the
+            // in-view lists reflect where you panned before you can open a picker
+            // (longer delays let the old viewport's entries linger).
             let region = mapView.region
             debounce?.invalidate()
-            debounce = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
+            debounce = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
                 self?.onRegionChange?(region)
             }
         }
