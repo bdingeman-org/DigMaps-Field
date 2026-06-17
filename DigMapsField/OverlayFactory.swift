@@ -26,12 +26,27 @@ enum OverlayFactory {
     static let nysHillshade =
         "https://elevation.its.ny.gov/arcgis/rest/services/NYS_Statewide_Hillshade/MapServer"
 
+    /// NJ statewide 10 ft bare-earth LiDAR hillshade — an ArcGIS ImageServer
+    /// (served via /exportImage). The NYS service has zero NJ coverage, so NJ
+    /// tiles came back blank until this was added. Matches the web app's
+    /// per-region hillshade (src/regions.ts).
+    static let njHillshade =
+        "https://maps.nj.gov/arcgis/rest/services/Elevation/NJ_10ft_HSD/ImageServer"
+
     static func mbtiles(_ file: MapFile) -> MKTileOverlay? {
         MBTilesOverlay(fileURL: file.url)
     }
 
     static func hillshade() -> MKTileOverlay {
-        EsriExportOverlay(exportBase: nysHillshade)
+        // Tiles over New Jersey hit NJ's LiDAR ImageServer; everywhere else falls
+        // back to the NYS hillshade. The NJ box spans the whole state — the only
+        // overlap with NY-proper is the NYC/Hudson wedge (east of ~-74.0), which
+        // isn't a target area; tighten to a polygon later if that ever matters.
+        EsriExportOverlay(services: [
+            .init(base: njHillshade, op: "exportImage",
+                  region: .init(minLat: 38.85, minLon: -75.60, maxLat: 41.36, maxLon: -73.90)),
+            .init(base: nysHillshade, op: "export", region: nil),
+        ])
     }
 
     static func aerial(_ a: CatalogAerial) -> MKTileOverlay {
