@@ -371,7 +371,7 @@ struct MapHomeView: View {
                     chip("Import an MBTiles…") { showImporter = true }
                 }
             case .lidar:
-                Text("NYS statewide hillshade · online")
+                Text("USGS 3DEP hillshade · online")
                     .font(Workshop.mono(11)).foregroundStyle(Workshop.creamDim)
             case .aerial:
                 if let years = catalog?.aerials["NYS orthos"] {

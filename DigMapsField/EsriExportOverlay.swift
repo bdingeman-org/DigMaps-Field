@@ -27,10 +27,14 @@ final class EsriExportOverlay: MKTileOverlay {
     /// One backing service. `op` is the ArcGIS operation: "export" for a
     /// MapServer, "exportImage" for an ImageServer. `region == nil` means this
     /// service is the fallback used wherever no region-bound service matches.
+    /// `renderingRule` is an optional ArcGIS raster-function JSON string (e.g.
+    /// `{"rasterFunction":"Hillshade Gray"}`) for ImageServers that serve raw
+    /// elevation and render on request.
     struct Service {
         let base: String
         let op: String
         let region: Region?
+        var renderingRule: String? = nil
     }
 
     private let services: [Service]
@@ -65,7 +69,7 @@ final class EsriExportOverlay: MKTileOverlay {
             ?? services[0]
 
         var c = URLComponents(string: svc.base + "/" + svc.op)!
-        c.queryItems = [
+        var items: [URLQueryItem] = [
             .init(name: "bbox", value: "\(minX),\(minY),\(maxX),\(maxY)"),
             .init(name: "bboxSR", value: "3857"),
             .init(name: "imageSR", value: "3857"),
@@ -74,6 +78,10 @@ final class EsriExportOverlay: MKTileOverlay {
             .init(name: "transparent", value: "true"),
             .init(name: "f", value: "image")
         ]
+        if let rule = svc.renderingRule {
+            items.append(.init(name: "renderingRule", value: rule))
+        }
+        c.queryItems = items
         return c.url!
     }
 }

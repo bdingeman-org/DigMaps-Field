@@ -22,30 +22,22 @@ enum OverlayFactory {
         return r
     }
 
-    /// NYS Statewide Hillshade MapServer (no tile cache — served via /export).
-    static let nysHillshade =
-        "https://elevation.its.ny.gov/arcgis/rest/services/NYS_Statewide_Hillshade/MapServer"
-
-    /// NJ statewide 10 ft bare-earth LiDAR hillshade — an ArcGIS ImageServer
-    /// (served via /exportImage). The NYS service has zero NJ coverage, so NJ
-    /// tiles came back blank until this was added. Matches the web app's
-    /// per-region hillshade (src/regions.ts).
-    static let njHillshade =
-        "https://maps.nj.gov/arcgis/rest/services/Elevation/NJ_10ft_HSD/ImageServer"
+    /// USGS 3DEP national elevation ImageServer. Served via /exportImage with a
+    /// "Hillshade Gray" rendering rule. One national source (vs. stitching NY +
+    /// NJ state services) means no service seam, no rectangular bleed over water
+    /// or across state lines, and transparent oceans — while still resolving to
+    /// ~1 m LiDAR detail wherever 3DEP has it (old roads, cellar holes).
+    static let usgs3DEP =
+        "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer"
 
     static func mbtiles(_ file: MapFile) -> MKTileOverlay? {
         MBTilesOverlay(fileURL: file.url)
     }
 
     static func hillshade() -> MKTileOverlay {
-        // Tiles over New Jersey hit NJ's LiDAR ImageServer; everywhere else falls
-        // back to the NYS hillshade. The NJ box spans the whole state — the only
-        // overlap with NY-proper is the NYC/Hudson wedge (east of ~-74.0), which
-        // isn't a target area; tighten to a polygon later if that ever matters.
         EsriExportOverlay(services: [
-            .init(base: njHillshade, op: "exportImage",
-                  region: .init(minLat: 38.85, minLon: -75.60, maxLat: 41.36, maxLon: -73.90)),
-            .init(base: nysHillshade, op: "export", region: nil),
+            .init(base: usgs3DEP, op: "exportImage", region: nil,
+                  renderingRule: #"{"rasterFunction":"Hillshade Gray"}"#),
         ])
     }
 
