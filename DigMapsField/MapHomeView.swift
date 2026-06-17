@@ -58,7 +58,7 @@ struct MapHomeView: View {
     @State private var trackMode = 0
 
     @State private var selectedFile: MapFile?
-    @State private var aerialYear: CatalogAerial?
+    @State private var aerialPick: AerialPick?
     @State private var lidarSource: HillshadeSource = .state
     @State private var selectedHist: CatalogHistoricMap?
 
@@ -110,7 +110,7 @@ struct MapHomeView: View {
         switch src {
         case .oldmap: return "file-" + (selectedFile?.id ?? "none")
         case .lidar:  return "lidar-" + lidarSource.rawValue
-        case .aerial: return "aerial-" + (aerialYear?.id ?? "none")
+        case .aerial: return "aerial-" + (aerialPick?.id ?? "none")
         case .hist:   return "hist-" + (selectedHist?.id ?? "none")
         }
     }
@@ -124,8 +124,11 @@ struct MapHomeView: View {
         case .lidar:
             return OverlayFactory.hillshade(lidarSource)
         case .aerial:
-            guard let a = aerialYear ?? catalog?.aerials["NYS orthos"]?.last else { return nil }
-            return OverlayFactory.aerial(a)
+            guard let pick = aerialPick ?? (catalog?.aerials["NYS orthos"]?.last).map(AerialPick.modern) else { return nil }
+            switch pick {
+            case .modern(let a): return OverlayFactory.aerial(a)
+            case .historic(let h): return h.makeOverlay()
+            }
         case .hist:
             guard let m = selectedHist, let catalog else { return nil }
             return OverlayFactory.historic(m, catalog: catalog)
@@ -313,7 +316,7 @@ struct MapHomeView: View {
                         switch k {
                         case .oldmap: if store.maps.isEmpty { showImporter = true } else { overlayOn = true; if selectedFile == nil { selectedFile = store.maps.first }; if store.maps.count > 1 { showFileSheet = true } }
                         case .hist:   showHistSheet = true
-                        case .aerial: overlayOn = true; if aerialYear == nil { aerialYear = catalog?.aerials["NYS orthos"]?.last }
+                        case .aerial: overlayOn = true; if aerialPick == nil { aerialPick = (catalog?.aerials["NYS orthos"]?.last).map(AerialPick.modern) }
                         case .lidar:  overlayOn = true
                         }
                     } label: {
@@ -381,14 +384,23 @@ struct MapHomeView: View {
                 }
                 Text("· online").font(Workshop.mono(11)).foregroundStyle(Workshop.creamDim)
             case .aerial:
-                if let years = catalog?.aerials["NYS orthos"] {
-                    Menu {
+                Menu {
+                    if let years = catalog?.aerials["NYS orthos"] {
                         ForEach(years) { a in
-                            Button(a.name) { aerialYear = a; overlayOn = true }
+                            Button(a.name) { aerialPick = .modern(a); overlayOn = true }
                         }
-                    } label: {
-                        chipLabel("Year: " + (aerialYear?.name ?? years.last!.name))
                     }
+                    if let c = viewRegion?.center ?? location.here {
+                        let hist = HistoricAerial.forCenter(c)
+                        if !hist.isEmpty {
+                            Divider()
+                            ForEach(hist) { h in
+                                Button(h.label) { aerialPick = .historic(h); overlayOn = true }
+                            }
+                        }
+                    }
+                } label: {
+                    chipLabel("Year: " + (aerialPick?.label ?? catalog?.aerials["NYS orthos"]?.last?.name ?? "—"))
                 }
             case .hist:
                 chip(selectedHist.map { "\($0.yearLabel) · \($0.atlas)" } ?? "Pick a map in view…") {

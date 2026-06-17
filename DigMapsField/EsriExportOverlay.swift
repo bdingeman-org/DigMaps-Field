@@ -35,6 +35,9 @@ final class EsriExportOverlay: MKTileOverlay {
         let op: String
         let region: Region?
         var renderingRule: String? = nil
+        /// Extra query items (e.g. `layers=show:0` to isolate one year of a
+        /// multi-year MapServer). Appended verbatim.
+        var extra: [URLQueryItem] = []
     }
 
     private let services: [Service]
@@ -81,6 +84,7 @@ final class EsriExportOverlay: MKTileOverlay {
         if let rule = svc.renderingRule {
             items.append(.init(name: "renderingRule", value: rule))
         }
+        items.append(contentsOf: svc.extra)
         c.queryItems = items
         return c.url!
     }
