@@ -60,9 +60,41 @@ struct OverlayCatalog: Decodable {
         return try? JSONDecoder().decode(OverlayCatalog.self, from: data)
     }()
 
-    /// Dated maps whose inked footprint covers the coordinate, oldest first.
+    /// Footprint area in deg² (smaller = more local/detailed). Safe if bbox missing.
+    private func footprint(_ m: CatalogHistoricMap) -> Double {
+        guard m.b.count == 4 else { return .greatestFiniteMagnitude }
+        return (m.b[2] - m.b[0]) * (m.b[3] - m.b[1])
+    }
+
+    /// Collapse multi-plate atlases to the plate that best covers `center`, then
+    /// rank: plates covering the center first, then smaller (more local) footprint,
+    /// then newer. Stops one atlas (e.g. a 26-plate Beers county atlas) from filling
+    /// the list with identical-looking rows, and surfaces the map under your view.
+    private func collapseAndRank(_ candidates: [CatalogHistoricMap],
+                                 center: CLLocationCoordinate2D) -> [CatalogHistoricMap] {
+        func better(_ a: CatalogHistoricMap, _ b: CatalogHistoricMap) -> Bool {
+            let ac = a.covers(center), bc = b.covers(center)
+            if ac != bc { return ac }
+            return footprint(a) < footprint(b)
+        }
+        var best: [String: CatalogHistoricMap] = [:]
+        for m in candidates {
+            let key = "\(m.y)|\(m.atlas)"
+            if let cur = best[key] { if better(m, cur) { best[key] = m } }
+            else { best[key] = m }
+        }
+        return best.values.sorted { a, b in
+            let ac = a.covers(center), bc = b.covers(center)
+            if ac != bc { return ac }
+            let fa = footprint(a), fb = footprint(b)
+            if fa != fb { return fa < fb }
+            return a.y > b.y
+        }
+    }
+
+    /// One row per atlas — the plate that best covers the coordinate — most-local first.
     func historic(at c: CLLocationCoordinate2D) -> [CatalogHistoricMap] {
-        maps.filter { $0.covers(c) }.sorted { ($0.y, $0.atlas) < ($1.y, $1.atlas) }
+        collapseAndRank(maps.filter { $0.covers(c) }, center: c)
     }
 
     /// Web-parity (DigMaps build 28): maps that would VISIBLY cover the current
@@ -95,7 +127,7 @@ struct OverlayCatalog: Decodable {
             }
             return Double(hit) / 25 >= 0.25
         }
-        return maps.filter(visible).sorted { ($0.y, $0.atlas) < ($1.y, $1.atlas) }
+        return collapseAndRank(maps.filter(visible), center: region.center)
     }
 
     func template(for map: CatalogHistoricMap) -> String {
