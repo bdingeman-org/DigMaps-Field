@@ -79,19 +79,19 @@ final class StateHillshadeOverlay: MKTileOverlay {
             ring.split(separator: " ").compactMap { pair -> CGPoint? in
                 let f = pair.split(separator: ",")
                 guard f.count == 2, let lat = Double(f[0]), let lon = Double(f[1]) else { return nil }
-                return Self.merc(lat, lon)
+                return StateHillshadeOverlay.merc(lat, lon)
             }
         }
 
     private static let njBox: Box = {
-        let pts = Self.njRings.flatMap { $0 }
+        let pts = StateHillshadeOverlay.njRings.flatMap { $0 }
         return Box(minX: pts.map(\.x).min()!, minY: pts.map(\.y).min()!,
                    maxX: pts.map(\.x).max()!, maxY: pts.map(\.y).max()!)
     }()
 
     // NY state bounding box (lat/lon → mercator); generous, only gates fetching.
     private static let nyBox: Box = {
-        let sw = Self.merc(40.45, -79.85), ne = Self.merc(45.05, -71.80)
+        let sw = StateHillshadeOverlay.merc(40.45, -79.85), ne = StateHillshadeOverlay.merc(45.05, -71.80)
         return Box(minX: sw.x, minY: sw.y, maxX: ne.x, maxY: ne.y)
     }()
 
