@@ -54,7 +54,7 @@ private struct HSLayer {
     let name: String
     let kind: HSKind
     let bbox: MBox        // gates whether this service is fetched for a tile
-    let clipNJ: Bool      // clip to NJ land outline (NJ only)
+    let clip: String?     // land-outline polygon to clip to (services that bleed); nil = self-clipping
     let desaturate: Bool  // grayscale the tile (MA's colored cache only)
 }
 
@@ -62,43 +62,64 @@ final class StateHillshadeOverlay: MKTileOverlay {
     private let session: URLSession
     private static let ci = CIContext()
 
-    private let layers: [HSLayer] = [
-        HSLayer(name: "NY",
-                kind: .export(base: "https://elevation.its.ny.gov/arcgis/rest/services/NYS_Statewide_Hillshade/MapServer",
-                              op: "export", rule: nil),
-                bbox: .latLon(40.48, -79.77, 45.02, -71.85), clipNJ: false, desaturate: false),
-        HSLayer(name: "NJ",
-                kind: .export(base: "https://maps.nj.gov/arcgis/rest/services/Elevation/NJ_10ft_HSD/ImageServer",
-                              op: "exportImage", rule: nil),
-                bbox: .latLon(38.92, -75.58, 41.36, -73.89), clipNJ: true, desaturate: false),
-        HSLayer(name: "VT",
-                kind: .tiled(base: "https://maps.vcgi.vermont.gov/arcgis/rest/services/EGC_services/IMG_VCGI_LIDARHILLSHD_WM_CACHE_v1/ImageServer"),
-                bbox: .latLon(42.72, -73.44, 45.02, -71.46), clipNJ: false, desaturate: false),
-        HSLayer(name: "NH",
-                kind: .export(base: "https://nhgeodata.unh.edu/image/rest/services/ImageServices/LiDAR_Bare_Earth_NW_HS_NH_2022_img/ImageServer",
-                              op: "exportImage", rule: nil),
-                bbox: .latLon(42.69, -72.56, 45.31, -70.70), clipNJ: false, desaturate: false),
-        HSLayer(name: "MA",
-                kind: .tiled(base: "https://tiles.arcgis.com/tiles/hGdibHYSPO59RG1h/arcgis/rest/services/LiDAR_Elevation_Hillshade/MapServer"),
-                bbox: .latLon(41.23, -73.51, 42.89, -69.86), clipNJ: false, desaturate: true),
-        HSLayer(name: "PA",
-                kind: .export(base: "https://imagery.pasda.psu.edu/arcgis/rest/services/pasda/PAMAP_Hillshade/MapServer",
-                              op: "export", rule: nil),
-                bbox: .latLon(39.71, -80.52, 42.27, -74.69), clipNJ: false, desaturate: false),
-        HSLayer(name: "CT",
-                kind: .export(base: "https://cteco.uconn.edu/ctraster/rest/services/elevation/Hillshade/ImageServer",
-                              op: "exportImage", rule: nil),
-                bbox: .latLon(40.98, -73.73, 42.05, -71.78), clipNJ: false, desaturate: false),
+    private static let layers: [HSLayer] = [
+        // — Northeast (shipped first) —
+        HSLayer(name: "NY", kind: .export(base: "https://elevation.its.ny.gov/arcgis/rest/services/NYS_Statewide_Hillshade/MapServer", op: "export", rule: nil),
+                bbox: .latLon(40.48, -79.77, 45.02, -71.85), clip: nil, desaturate: false),
+        HSLayer(name: "NJ", kind: .export(base: "https://maps.nj.gov/arcgis/rest/services/Elevation/NJ_10ft_HSD/ImageServer", op: "exportImage", rule: nil),
+                bbox: .latLon(38.92, -75.58, 41.36, -73.89), clip: njLandRaw, desaturate: false),
+        HSLayer(name: "VT", kind: .tiled(base: "https://maps.vcgi.vermont.gov/arcgis/rest/services/EGC_services/IMG_VCGI_LIDARHILLSHD_WM_CACHE_v1/ImageServer"),
+                bbox: .latLon(42.72, -73.44, 45.02, -71.46), clip: nil, desaturate: false),
+        HSLayer(name: "NH", kind: .export(base: "https://nhgeodata.unh.edu/image/rest/services/ImageServices/LiDAR_Bare_Earth_NW_HS_NH_2022_img/ImageServer", op: "exportImage", rule: nil),
+                bbox: .latLon(42.69, -72.56, 45.31, -70.70), clip: nil, desaturate: false),
+        HSLayer(name: "MA", kind: .tiled(base: "https://tiles.arcgis.com/tiles/hGdibHYSPO59RG1h/arcgis/rest/services/LiDAR_Elevation_Hillshade/MapServer"),
+                bbox: .latLon(41.23, -73.51, 42.89, -69.86), clip: nil, desaturate: true),
+        HSLayer(name: "PA", kind: .export(base: "https://imagery.pasda.psu.edu/arcgis/rest/services/pasda/PAMAP_Hillshade/MapServer", op: "export", rule: nil),
+                bbox: .latLon(39.71, -80.52, 42.27, -74.69), clip: nil, desaturate: false),
+        HSLayer(name: "CT", kind: .export(base: "https://cteco.uconn.edu/ctraster/rest/services/elevation/Hillshade/ImageServer", op: "exportImage", rule: nil),
+                bbox: .latLon(40.98, -73.73, 42.05, -71.78), clip: nil, desaturate: false),
+        // — adjacent expansion —
+        HSLayer(name: "ME", kind: .export(base: "https://gis.maine.gov/image/rest/services/DEM/Maine_Elevation_DEM_Statewide/ImageServer", op: "exportImage", rule: #"{"rasterFunction":"Hillshade"}"#),
+                bbox: .latLon(43.06, -71.08, 47.46, -66.95), clip: nil, desaturate: false),
+        HSLayer(name: "RI", kind: .export(base: "https://maps.edc.uri.edu/arcgis/rest/services/Atlas_elevation/TopoBathy/MapServer", op: "export", rule: nil),
+                bbox: .latLon(41.15, -71.86, 42.02, -71.12), clip: nil, desaturate: false),
+        HSLayer(name: "DE", kind: .export(base: "https://imagery.firstmap.delaware.gov/imagery/rest/services/Elevation_SP/DE_Lidar_DEM/ImageServer", op: "exportImage", rule: #"{"rasterFunction":"Lidar DEM Hillshade"}"#),
+                bbox: .latLon(38.45, -75.79, 39.84, -75.05), clip: nil, desaturate: false),
+        HSLayer(name: "MD", kind: .export(base: "https://mdgeodata.md.gov/lidar/rest/services/Statewide/MD_statewide_hillshade_m/ImageServer", op: "exportImage", rule: nil),
+                bbox: .latLon(37.89, -79.49, 39.72, -75.05), clip: nil, desaturate: false),
+        HSLayer(name: "WV", kind: .tiled(base: "https://services.wvgis.wvu.edu/arcgis/rest/services/Elevation/wv_hillshade_1m_mosaic/MapServer"),
+                bbox: .latLon(37.20, -82.64, 40.64, -77.72), clip: nil, desaturate: false),
+        HSLayer(name: "OH", kind: .export(base: "https://gis.ohiodnr.gov/image/rest/services/OH_DEM_test/ImageServer", op: "exportImage", rule: #"{"rasterFunction":"Hillshade"}"#),
+                bbox: .latLon(38.40, -84.82, 41.98, -80.52), clip: nil, desaturate: false),
+        HSLayer(name: "KY", kind: .export(base: "https://kyraster.ky.gov/arcgis/rest/services/ElevationServices/Ky_DEM_KYAPED_5FT_Hillshade/ImageServer", op: "exportImage", rule: nil),
+                bbox: .latLon(36.50, -89.57, 39.15, -81.96), clip: nil, desaturate: false),
+        HSLayer(name: "IN", kind: .export(base: "https://di-ingov.img.arcgis.com/arcgis/rest/services/DynamicWebMercator/Indiana_2016_2020_DEM/ImageServer", op: "exportImage", rule: #"{"rasterFunction":"GrayscaleHillshade"}"#),
+                bbox: .latLon(37.77, -88.10, 41.76, -84.78), clip: nil, desaturate: false),
+        HSLayer(name: "NC", kind: .export(base: "https://services.nconemap.gov/secure/rest/services/Elevation/DEM20ft_Hillshade/ImageServer", op: "exportImage", rule: nil),
+                bbox: .latLon(33.84, -84.32, 36.59, -75.46), clip: nil, desaturate: false),
+        // VA has no state hillshade service → USGS 3DEP (national), clipped to VA so it doesn't bleed into neighbors.
+        HSLayer(name: "VA", kind: .export(base: "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer", op: "exportImage", rule: #"{"rasterFunction":"Hillshade Gray"}"#),
+                bbox: .latLon(36.54, -83.68, 39.47, -75.24), clip: vaLandRaw, desaturate: false),
     ]
 
-    private lazy var njRings: [[(x: Double, y: Double)]] =
-        njLandRaw.split(separator: ";").map { ring in
+    /// Parsed clip polygons (Web-Mercator), keyed by layer name. Built once.
+    private static let clipRings: [String: [[(x: Double, y: Double)]]] = {
+        var rings: [String: [[(x: Double, y: Double)]]] = [:]
+        for layer in StateHillshadeOverlay.layers where layer.clip != nil {
+            rings[layer.name] = StateHillshadeOverlay.parseRings(layer.clip!)
+        }
+        return rings
+    }()
+
+    private static func parseRings(_ raw: String) -> [[(x: Double, y: Double)]] {
+        raw.split(separator: ";").map { ring in
             ring.split(separator: " ").compactMap { pair -> (x: Double, y: Double)? in
                 let f = pair.split(separator: ",")
                 guard f.count == 2, let lat = Double(f[0]), let lon = Double(f[1]) else { return nil }
                 return mercator(lat, lon)
             }
         }
+    }
 
     convenience init() { self.init(urlTemplate: nil) }
     override init(urlTemplate: String?) {
@@ -144,11 +165,11 @@ final class StateHillshadeOverlay: MKTileOverlay {
         }
     }
 
-    /// NJ land outline as a clip path in this tile's pixel space (256×256).
-    private func njClipPath(_ b: MBox) -> UIBezierPath {
+    /// A clip layer's land outline as a path in this tile's pixel space (256×256).
+    private func clipPath(_ rings: [[(x: Double, y: Double)]], _ b: MBox) -> UIBezierPath {
         let path = UIBezierPath()
         let w = b.maxX - b.minX, h = b.maxY - b.minY
-        for ring in njRings where ring.count > 2 {
+        for ring in rings where ring.count > 2 {
             for (i, p) in ring.enumerated() {
                 let pt = CGPoint(x: (p.x - b.minX) / w * 256, y: (b.maxY - p.y) / h * 256)
                 if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
@@ -185,11 +206,11 @@ final class StateHillshadeOverlay: MKTileOverlay {
     override func loadTile(at path: MKTileOverlayPath,
                            result: @escaping (Data?, Error?) -> Void) {
         let b = tileBox(path)
-        let active = layers.filter { $0.bbox.intersects(b) }
+        let active = Self.layers.filter { $0.bbox.intersects(b) }
         guard !active.isEmpty else { result(nil, nil); return }
 
         // Fast path: a single plain service → hand its tile back untouched.
-        if active.count == 1, !active[0].clipNJ, !active[0].desaturate {
+        if active.count == 1, active[0].clip == nil, !active[0].desaturate {
             fetch(tileURL(active[0], path)) { result($0, nil) }
             return
         }
@@ -218,9 +239,9 @@ final class StateHillshadeOverlay: MKTileOverlay {
             for layer in active {
                 guard let d = datas[layer.name], var image = UIImage(data: d) else { continue }
                 if layer.desaturate { image = grayscale(image) }
-                if layer.clipNJ {
+                if layer.clip != nil, let rings = Self.clipRings[layer.name] {
                     rctx.cgContext.saveGState()
-                    njClipPath(b).addClip()
+                    clipPath(rings, b).addClip()
                     image.draw(in: rect)
                     rctx.cgContext.restoreGState()
                 } else {
