@@ -19,9 +19,21 @@ import Foundation
 import MapKit
 import UIKit
 
-final class StateHillshadeOverlay: MKTileOverlay {
-    private static let RAD = 20037508.342789244
+private let kMercR = 20037508.342789244
 
+/// lat/lon → Web-Mercator metres.
+private func mercator(_ lat: Double, _ lon: Double) -> (x: Double, y: Double) {
+    (lon / 180 * kMercR, log(tan((90 + lat) * .pi / 360)) * kMercR / .pi)
+}
+
+private struct MBox {
+    var minX, minY, maxX, maxY: Double
+    func intersects(_ o: MBox) -> Bool {
+        minX <= o.maxX && maxX >= o.minX && minY <= o.maxY && maxY >= o.minY
+    }
+}
+
+final class StateHillshadeOverlay: MKTileOverlay {
     private let nyExport =
         "https://elevation.its.ny.gov/arcgis/rest/services/NYS_Statewide_Hillshade/MapServer/export"
     private let njExport =
@@ -36,28 +48,40 @@ final class StateHillshadeOverlay: MKTileOverlay {
         maximumZ = 19
     }
 
-    // MARK: geometry helpers
+    // MARK: NJ land polygon (parsed once per overlay)
 
-    private struct Box { var minX, minY, maxX, maxY: Double
-        func intersects(_ o: Box) -> Bool {
-            minX <= o.maxX && maxX >= o.minX && minY <= o.maxY && maxY >= o.minY
+    private lazy var njRings: [[(x: Double, y: Double)]] =
+        njLandRaw.split(separator: ";").map { ring in
+            ring.split(separator: " ").compactMap { pair -> (x: Double, y: Double)? in
+                let f = pair.split(separator: ",")
+                guard f.count == 2, let lat = Double(f[0]), let lon = Double(f[1]) else { return nil }
+                return mercator(lat, lon)
+            }
         }
+
+    private lazy var njBox: MBox = {
+        let pts = njRings.flatMap { $0 }
+        return MBox(minX: pts.map(\.x).min() ?? 0, minY: pts.map(\.y).min() ?? 0,
+                    maxX: pts.map(\.x).max() ?? 0, maxY: pts.map(\.y).max() ?? 0)
+    }()
+
+    // NY state bounding box (generous; only gates whether to fetch NY).
+    private let nyBox: MBox = {
+        let sw = mercator(40.45, -79.85), ne = mercator(45.05, -71.80)
+        return MBox(minX: sw.x, minY: sw.y, maxX: ne.x, maxY: ne.y)
+    }()
+
+    // MARK: tile geometry
+
+    private func tileBox(_ p: MKTileOverlayPath) -> MBox {
+        let n = Double(1 << p.z), world = kMercR * 2
+        return MBox(minX: -kMercR + Double(p.x) / n * world,
+                    minY:  kMercR - Double(p.y + 1) / n * world,
+                    maxX: -kMercR + Double(p.x + 1) / n * world,
+                    maxY:  kMercR - Double(p.y) / n * world)
     }
 
-    private static func merc(_ lat: Double, _ lon: Double) -> CGPoint {
-        CGPoint(x: lon / 180 * RAD,
-                y: log(tan((90 + lat) * .pi / 360)) * RAD / .pi)
-    }
-
-    private func tileBox(_ p: MKTileOverlayPath) -> Box {
-        let n = Double(1 << p.z), world = Self.RAD * 2
-        return Box(minX: -Self.RAD + Double(p.x) / n * world,
-                   minY:  Self.RAD - Double(p.y + 1) / n * world,
-                   maxX: -Self.RAD + Double(p.x + 1) / n * world,
-                   maxY:  Self.RAD - Double(p.y) / n * world)
-    }
-
-    private func exportURL(_ base: String, _ b: Box) -> URL {
+    private func exportURL(_ base: String, _ b: MBox) -> URL {
         var c = URLComponents(string: base)!
         c.queryItems = [
             .init(name: "bbox", value: "\(b.minX),\(b.minY),\(b.maxX),\(b.maxY)"),
@@ -71,38 +95,14 @@ final class StateHillshadeOverlay: MKTileOverlay {
         return c.url!
     }
 
-    // MARK: NJ land polygon (Web-Mercator), parsed once
-
-    private static let njRings: [[CGPoint]] = njLandRaw
-        .split(separator: ";")
-        .map { ring in
-            ring.split(separator: " ").compactMap { pair -> CGPoint? in
-                let f = pair.split(separator: ",")
-                guard f.count == 2, let lat = Double(f[0]), let lon = Double(f[1]) else { return nil }
-                return StateHillshadeOverlay.merc(lat, lon)
-            }
-        }
-
-    private static let njBox: Box = {
-        let pts = StateHillshadeOverlay.njRings.flatMap { $0 }
-        return Box(minX: pts.map(\.x).min()!, minY: pts.map(\.y).min()!,
-                   maxX: pts.map(\.x).max()!, maxY: pts.map(\.y).max()!)
-    }()
-
-    // NY state bounding box (lat/lon → mercator); generous, only gates fetching.
-    private static let nyBox: Box = {
-        let sw = StateHillshadeOverlay.merc(40.45, -79.85), ne = StateHillshadeOverlay.merc(45.05, -71.80)
-        return Box(minX: sw.x, minY: sw.y, maxX: ne.x, maxY: ne.y)
-    }()
-
     /// NJ land outline as a clip path in this tile's pixel space (256×256).
-    private func njClipPath(_ b: Box) -> UIBezierPath {
+    private func njClipPath(_ b: MBox) -> UIBezierPath {
         let path = UIBezierPath()
         let w = b.maxX - b.minX, h = b.maxY - b.minY
-        for ring in Self.njRings where ring.count > 2 {
+        for ring in njRings where ring.count > 2 {
             for (i, p) in ring.enumerated() {
-                let pt = CGPoint(x: (Double(p.x) - b.minX) / w * 256,
-                                 y: (b.maxY - Double(p.y)) / h * 256)
+                let pt = CGPoint(x: (p.x - b.minX) / w * 256,
+                                 y: (b.maxY - p.y) / h * 256)
                 if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
             }
             path.close()
@@ -115,8 +115,8 @@ final class StateHillshadeOverlay: MKTileOverlay {
     override func loadTile(at path: MKTileOverlayPath,
                            result: @escaping (Data?, Error?) -> Void) {
         let b = tileBox(path)
-        let needNJ = b.intersects(Self.njBox)
-        let needNY = b.intersects(Self.nyBox)
+        let needNJ = b.intersects(njBox)
+        let needNY = b.intersects(nyBox)
         guard needNJ || needNY else { result(nil, nil); return }
 
         var njData: Data?, nyData: Data?
@@ -141,7 +141,7 @@ final class StateHillshadeOverlay: MKTileOverlay {
     }
 
     /// NJ clipped to its land outline, NY drawn over it.
-    private func composite(njData: Data?, nyData: Data?, box b: Box) -> Data? {
+    private func composite(njData: Data?, nyData: Data?, box b: MBox) -> Data? {
         let size = CGSize(width: 256, height: 256)
         let fmt = UIGraphicsImageRendererFormat.default()
         fmt.scale = 1; fmt.opaque = false
