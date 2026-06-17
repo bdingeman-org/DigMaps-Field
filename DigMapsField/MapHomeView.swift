@@ -649,6 +649,7 @@ struct BaseMapView: UIViewRepresentable {
         var routeOverlay: MKPolyline?
         var routeKey = "none"
         var lastRouteFitToken = 0
+        var didInitialFit = false
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             // debounced like the web (400ms) so the list doesn't churn mid-pan
@@ -668,6 +669,20 @@ struct BaseMapView: UIViewRepresentable {
             v.glyphImage = UIImage(systemName: "mappin")
             v.annotation = annotation
             return v
+        }
+
+        /// On the first real GPS fix, center on the user at a neighborhood zoom so the
+        /// app opens usefully instead of at MapKit's default wide region. One-shot — later
+        /// fit/follow/search actions still take over normally.
+        func mapView(_ mapView: MKMapView, didUpdate userLocation: MKUserLocation) {
+            guard !didInitialFit else { return }
+            let c = userLocation.coordinate
+            guard CLLocationCoordinate2DIsValid(c), c.latitude != 0 || c.longitude != 0 else { return }
+            didInitialFit = true
+            // Tunable default zoom: ~4.0° ≈ regional view (state + neighbors), matching the
+            // open-app screenshot. MapKit fits this to the portrait aspect, so latitude drives it.
+            let span = MKCoordinateSpan(latitudeDelta: 4.0, longitudeDelta: 4.0)
+            mapView.setRegion(MKCoordinateRegion(center: c, span: span), animated: false)
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
