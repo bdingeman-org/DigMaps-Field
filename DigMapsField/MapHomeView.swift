@@ -83,6 +83,15 @@ struct MapHomeView: View {
     @State private var showRouteSheet = false
     @State private var showRouteImporter = false
 
+    // parcel-owner lookup (tap-to-query, web parity)
+    @State private var parcelMode = false
+    @State private var parcelLookup: ParcelLookup?
+    @State private var parcelLoading = false
+    @State private var showParcelSheet = false
+    @State private var parcelRings: [[CLLocationCoordinate2D]]?
+    @State private var parcelPoint: CLLocationCoordinate2D?
+    @State private var parcelToken = 0
+
     private var catalog: OverlayCatalog? { OverlayCatalog.shared }
 
     private var routeTypes: [UTType] {
@@ -165,6 +174,8 @@ struct MapHomeView: View {
                 fitRegion: fitRegion, fitToken: fitToken, trackMode: trackMode,
                 searchPin: searchPin, searchToken: searchToken,
                 routeCoords: routeCoords, routeKey: routeKey, routeFitToken: routeFitToken,
+                parcelMode: parcelMode, onMapTap: parcelTap,
+                parcelRings: parcelRings, parcelPoint: parcelPoint, parcelToken: parcelToken,
                 onRegionChange: {
                     viewRegion = $0
                     aerialHistInView = HistoricAerial.forCenter($0.center)
@@ -197,6 +208,7 @@ struct MapHomeView: View {
         .sheet(isPresented: $showHistSheet) { histSheet }
         .sheet(isPresented: $showFileSheet) { fileSheet }
         .sheet(isPresented: $showRouteSheet) { routeSheet }
+        .sheet(isPresented: $showParcelSheet) { parcelSheet }
         .alert("Import failed", isPresented: Binding(
             get: { store.lastError != nil || routes.lastError != nil },
             set: { if !$0 { store.lastError = nil; routes.lastError = nil } })) {
@@ -240,9 +252,21 @@ struct MapHomeView: View {
                         .foregroundStyle(Workshop.gold)
                 }
                 .accessibilityLabel("Toggle satellite basemap")
+                Button(action: toggleParcelMode) {
+                    Image(systemName: "square.dashed.inset.filled")
+                        .foregroundStyle(parcelMode ? Workshop.glow : Workshop.gold)
+                }
+                .accessibilityLabel("Parcel owner lookup")
             }
             .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 6)
             searchBar
+            if parcelMode {
+                Text("Parcel lookup on — tap any parcel on the map")
+                    .font(Workshop.mono(10)).foregroundStyle(Workshop.bg)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+                    .background(Workshop.gold)
+            }
         }
         .background(Workshop.band.opacity(0.92))
     }
@@ -331,6 +355,98 @@ struct MapHomeView: View {
         trackMode = 0
         search.status = "Found: " + label
         dismissKeyboard()
+    }
+
+    // MARK: parcel lookup
+
+    /// Tap on the map while parcel mode is on → query the covering parcel layer.
+    private func parcelTap(_ c: CLLocationCoordinate2D) {
+        parcelLoading = true
+        parcelLookup = nil
+        showParcelSheet = true
+        Task {
+            let result = await ParcelService.lookup(at: c)
+            await MainActor.run {
+                parcelLoading = false
+                parcelLookup = result
+                if case .found(let r) = result {
+                    parcelRings = r.rings
+                    parcelPoint = r.point
+                } else {
+                    parcelRings = nil; parcelPoint = nil
+                }
+                parcelToken += 1
+            }
+        }
+    }
+
+    private func toggleParcelMode() {
+        parcelMode.toggle()
+        if !parcelMode {                       // leaving the mode clears the drawn parcel
+            parcelRings = nil; parcelPoint = nil; parcelToken += 1
+        }
+    }
+
+    private var parcelSheet: some View {
+        NavigationStack {
+            Group {
+                if parcelLoading {
+                    VStack(spacing: 10) {
+                        ProgressView().tint(Workshop.gold)
+                        Text("Looking up parcel…").font(Workshop.mono(12)).foregroundStyle(Workshop.creamDim)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    switch parcelLookup {
+                    case .found(let r):       parcelDetail(r)
+                    case .notFound(let cov):  parcelMessage("No parcel here — lookup covers \(cov).")
+                    case .noCoverage:         parcelMessage("No parcel data for this spot yet. Covered: Saratoga County & other NY counties, plus Bergen County NJ.")
+                    case .failed(let msg):    parcelMessage("Parcel lookup failed — \(msg). The county server may be busy; try again.")
+                    case nil:                 parcelMessage("—")
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Workshop.bg)
+            .navigationTitle("Parcel owner")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .preferredColorScheme(.dark)
+    }
+
+    private func parcelMessage(_ text: String) -> some View {
+        Text(text)
+            .font(Workshop.mono(13)).foregroundStyle(Workshop.creamDim)
+            .multilineTextAlignment(.center)
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func parcelDetail(_ r: ParcelResult) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(r.owner)
+                    .font(Workshop.monoBold(20)).foregroundStyle(Workshop.gold)
+                    .padding(.bottom, 12)
+                ForEach(r.rows.indices, id: \.self) { i in
+                    HStack(alignment: .top) {
+                        Text(r.rows[i].label)
+                            .font(Workshop.mono(12)).foregroundStyle(Workshop.creamDim)
+                            .frame(width: 90, alignment: .leading)
+                        Text(r.rows[i].value)
+                            .font(Workshop.mono(12)).foregroundStyle(Workshop.cream)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.vertical, 5)
+                    Divider().overlay(Workshop.panel)
+                }
+                Text("Coverage: \(r.coverage)\(r.point != nil ? " · approximate (centroid)" : "")")
+                    .font(Workshop.mono(10)).foregroundStyle(Workshop.creamDim)
+                    .padding(.top, 12)
+            }
+            .padding(18)
+        }
     }
 
     private var panel: some View {
@@ -600,6 +716,11 @@ struct BaseMapView: UIViewRepresentable {
     var routeCoords: [CLLocationCoordinate2D]? = nil
     var routeKey: String = "none"
     var routeFitToken: Int = 0
+    var parcelMode: Bool = false
+    var onMapTap: ((CLLocationCoordinate2D) -> Void)? = nil
+    var parcelRings: [[CLLocationCoordinate2D]]? = nil
+    var parcelPoint: CLLocationCoordinate2D? = nil
+    var parcelToken: Int = 0
     var onRegionChange: ((MKCoordinateRegion) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -608,16 +729,25 @@ struct BaseMapView: UIViewRepresentable {
         let view = MKMapView()
         view.delegate = context.coordinator
         context.coordinator.onRegionChange = onRegionChange
+        context.coordinator.mapView = view
         view.mapType = .mutedStandard
         view.showsUserLocation = true
         view.showsCompass = true
         view.showsScale = true
         view.pointOfInterestFilter = .excludingAll
+        // tap-to-query for parcel mode (no-op unless parcelMode is on); set to
+        // recognize alongside the map's own gestures so pan/zoom still work
+        let tap = UITapGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handleTap(_:)))
+        tap.delegate = context.coordinator
+        view.addGestureRecognizer(tap)
         return view
     }
 
     func updateUIView(_ view: MKMapView, context: Context) {
         let co = context.coordinator
+        co.parcelMode = parcelMode
+        co.onMapTap = onMapTap
         view.mapType = satellite ? .hybrid : .mutedStandard
         if overlayKey != co.currentKey {
             co.currentKey = overlayKey
@@ -659,6 +789,23 @@ struct BaseMapView: UIViewRepresentable {
                 : trackMode == 1 ? .follow : .none
             view.setUserTrackingMode(mode, animated: true)
         }
+        if parcelToken != co.lastParcelToken {
+            co.lastParcelToken = parcelToken
+            for o in co.parcelOverlays { view.removeOverlay(o) }
+            co.parcelOverlays = []
+            if let rings = parcelRings {
+                for r in rings where r.count >= 3 {
+                    let poly = MKPolygon(coordinates: r, count: r.count)
+                    co.parcelOverlays.append(poly)
+                    view.addOverlay(poly, level: .aboveLabels)
+                }
+            }
+            if let p = parcelPoint {
+                let circ = MKCircle(center: p, radius: 25)
+                co.parcelOverlays.append(circ)
+                view.addOverlay(circ, level: .aboveLabels)
+            }
+        }
         if searchToken != co.lastSearchToken {
             co.lastSearchToken = searchToken
             if let c = searchPin {
@@ -674,7 +821,7 @@ struct BaseMapView: UIViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, MKMapViewDelegate {
+    final class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var onRegionChange: ((MKCoordinateRegion) -> Void)?
         private var debounce: Timer?
         var currentKey = "none"
@@ -689,6 +836,23 @@ struct BaseMapView: UIViewRepresentable {
         var routeKey = "none"
         var lastRouteFitToken = 0
         var didInitialFit = false
+        weak var mapView: MKMapView?
+        var parcelMode = false
+        var onMapTap: ((CLLocationCoordinate2D) -> Void)?
+        var parcelOverlays: [MKOverlay] = []
+        var lastParcelToken = 0
+
+        private static let gold = UIColor(red: 0xf0/255.0, green: 0xc0/255.0, blue: 0x62/255.0, alpha: 1)
+        private static let goldFill = UIColor(red: 0xb8/255.0, green: 0x86/255.0, blue: 0x2c/255.0, alpha: 1)
+
+        @objc func handleTap(_ g: UITapGestureRecognizer) {
+            guard parcelMode, let mv = mapView else { return }
+            let pt = g.location(in: mv)
+            onMapTap?(mv.convert(pt, toCoordinateFrom: mv))
+        }
+        // let our tap coexist with MapKit's built-in gestures
+        func gestureRecognizer(_ g: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             // Short debounce: just coalesce rapid momentum fires. Kept brief so the
@@ -729,6 +893,20 @@ struct BaseMapView: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let line = overlay as? MKPolyline {
                 return OverlayFactory.routeRenderer(for: line)
+            }
+            if let poly = overlay as? MKPolygon {
+                let r = MKPolygonRenderer(polygon: poly)
+                r.strokeColor = Coordinator.gold
+                r.lineWidth = 2
+                r.fillColor = Coordinator.goldFill.withAlphaComponent(0.12)
+                return r
+            }
+            if let circ = overlay as? MKCircle {
+                let r = MKCircleRenderer(circle: circ)
+                r.strokeColor = Coordinator.gold
+                r.lineWidth = 2
+                r.fillColor = Coordinator.goldFill.withAlphaComponent(0.3)
+                return r
             }
             if let tiles = overlay as? MKTileOverlay {
                 let r = MKTileOverlayRenderer(tileOverlay: tiles)
