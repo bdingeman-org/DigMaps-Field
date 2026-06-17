@@ -39,8 +39,11 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
 }
 
 enum SrcKind: String, CaseIterable, Identifiable {
-    case oldmap = "Old map", lidar = "LIDAR", aerial = "Aerial", hist = "Historic"
+    case oldmap = "Old map", lidar = "LIDAR", aerial = "Aerial", hist = "Old maps"
     var id: String { rawValue }
+    /// Sources shown as primary tabs. `oldmap` (import-your-own MBTiles) is a
+    /// power feature reached from the header menu, not a main tab.
+    static var tabs: [SrcKind] { [.lidar, .aerial, .hist] }
 }
 
 
@@ -50,7 +53,7 @@ struct MapHomeView: View {
     @StateObject private var location = LocationManager()
     @StateObject private var search = PlaceSearch()
 
-    @State private var src: SrcKind = .oldmap
+    @State private var src: SrcKind = .hist
     @State private var overlayOn = false          // eye — off by default, like web
     @State private var opacity = 0.8
     @State private var basemapSat = false         // ◑ basemap toggle
@@ -174,6 +177,7 @@ struct MapHomeView: View {
             if case .success(let urls) = result {
                 for url in urls { store.importMap(from: url) }
                 if selectedFile == nil { selectedFile = store.maps.first }
+                if selectedFile != nil { src = .oldmap; overlayOn = true; fitToken += 1 }
             }
         }
         .fileImporter(isPresented: $showRouteImporter,
@@ -207,6 +211,23 @@ struct MapHomeView: View {
                 CoilMark(size: 21)
                 Wordmark(size: 15)
                 Spacer()
+                Menu {
+                    Button {
+                        showImporter = true
+                    } label: { Label("Import MBTiles…", systemImage: "square.and.arrow.down") }
+                    if !store.maps.isEmpty {
+                        Button {
+                            src = .oldmap; overlayOn = true
+                            if selectedFile == nil { selectedFile = store.maps.first }
+                            fitToken += 1
+                            if store.maps.count > 1 { showFileSheet = true }
+                        } label: { Label("My imported maps", systemImage: "map") }
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                        .foregroundStyle(Workshop.gold)
+                }
+                .accessibilityLabel("Import map tiles")
                 Button { basemapSat.toggle() } label: {
                     Image(systemName: basemapSat ? "globe.americas.fill" : "circle.lefthalf.filled")
                         .foregroundStyle(Workshop.gold)
@@ -310,7 +331,7 @@ struct MapHomeView: View {
             routeBar
             // source switch — the web's .srcswitch
             HStack(spacing: 4) {
-                ForEach(SrcKind.allCases) { k in
+                ForEach(SrcKind.tabs) { k in
                     Button {
                         src = k
                         switch k {
@@ -343,10 +364,6 @@ struct MapHomeView: View {
                     .font(Workshop.mono(11)).foregroundStyle(Workshop.creamDim)
                     .frame(width: 38, alignment: .trailing)
                 Divider().frame(height: 20).overlay(Workshop.panel)
-                Button { fitToken += 1; trackMode = 0 } label: {
-                    Image(systemName: "map").foregroundStyle(Workshop.creamDim)
-                }
-                .accessibilityLabel("Fit overlay")
                 Button { trackMode = trackMode == 1 ? 2 : 1 } label: {
                     Image(systemName: trackMode == 2 ? "location.north.line.fill" : "location.fill")
                         .foregroundStyle(trackMode > 0 ? Workshop.glow : Workshop.creamDim)
@@ -470,7 +487,7 @@ struct MapHomeView: View {
                     }
                     ForEach(maps) { m in
                         Button {
-                            selectedHist = m; overlayOn = true; showHistSheet = false
+                            selectedHist = m; overlayOn = true; fitToken += 1; showHistSheet = false
                         } label: {
                             HStack {
                                 Text(m.yearLabel).font(Workshop.monoBold(14)).foregroundStyle(Workshop.gold)
@@ -496,7 +513,7 @@ struct MapHomeView: View {
             List {
                 ForEach(store.maps) { f in
                     Button {
-                        selectedFile = f; overlayOn = true; showFileSheet = false
+                        selectedFile = f; overlayOn = true; fitToken += 1; showFileSheet = false
                     } label: {
                         VStack(alignment: .leading) {
                             Text(f.name).foregroundStyle(Workshop.cream)
