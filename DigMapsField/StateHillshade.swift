@@ -8,15 +8,15 @@
 //  handled per tile:
 //    • NJ (NJ_10ft_HSD) paints opaque gray past its land — over the Hudson, NY
 //      Harbor and bays — so its imagery is clipped to NJ's coastline outline.
-//    • MA's fast cached service is an elevation-tinted (green) composite, so its
-//      tiles are desaturated to gray to match the neighbouring states.
+//    • MA uses MassGIS LiDAR_ShadedRelief (already pure grey LiDAR hillshade).
+//      (The old LiDAR_Elevation_Hillshade service became a colored elevation blend.)
 //
 //  Sources (all verified live 2026-06-17):
 //    NY  NYS_Statewide_Hillshade  MapServer /export        ~1m   dynamic
 //    NJ  NJ_10ft_HSD              ImageServer /exportImage  ~3m   dynamic, clip
 //    VT  VCGI LIDARHILLSHD cache  ImageServer /tile         0.7m  cached
 //    NH  GRANIT NW bare-earth     ImageServer /exportImage  0.76m dynamic
-//    MA  MassGIS Elevation_HS     MapServer /tile           0.5m  cached, gray-ize
+//    MA  MassGIS LiDAR_ShadedRelief MapServer /tile          ~1m   cached, grey
 //    PA  PASDA PAMAP_Hillshade    MapServer /export         ~1m   dynamic
 //    CT  CT ECO Hillshade (3857)  ImageServer /exportImage  0.61m dynamic
 //
@@ -72,8 +72,8 @@ final class StateHillshadeOverlay: MKTileOverlay {
                 bbox: .latLon(42.72, -73.44, 45.02, -71.46), clip: nil, desaturate: false),
         HSLayer(name: "NH", kind: .export(base: "https://nhgeodata.unh.edu/image/rest/services/ImageServices/LiDAR_Bare_Earth_NW_HS_NH_2022_img/ImageServer", op: "exportImage", rule: nil),
                 bbox: .latLon(42.69, -72.56, 45.31, -70.70), clip: nil, desaturate: false),
-        HSLayer(name: "MA", kind: .tiled(base: "https://tiles.arcgis.com/tiles/hGdibHYSPO59RG1h/arcgis/rest/services/LiDAR_Elevation_Hillshade/MapServer"),
-                bbox: .latLon(41.23, -73.51, 42.89, -69.86), clip: nil, desaturate: true),
+        HSLayer(name: "MA", kind: .tiled(base: "https://tiles.arcgis.com/tiles/hGdibHYSPO59RG1h/arcgis/rest/services/LiDAR_ShadedRelief/MapServer"),
+                bbox: .latLon(41.23, -73.51, 42.89, -69.86), clip: nil, desaturate: false),
         HSLayer(name: "PA", kind: .export(base: "https://imagery.pasda.psu.edu/arcgis/rest/services/pasda/PAMAP_Hillshade/MapServer", op: "export", rule: nil),
                 bbox: .latLon(39.71, -80.52, 42.27, -74.69), clip: nil, desaturate: false),
         HSLayer(name: "CT", kind: .export(base: "https://cteco.uconn.edu/ctraster/rest/services/elevation/Hillshade/ImageServer", op: "exportImage", rule: nil),
