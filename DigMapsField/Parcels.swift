@@ -153,6 +153,29 @@ enum ParcelLookup {
 
 enum ParcelService {
 
+    /// Live parcel-BOUNDARY overlay for the whole viewport (not just a tapped
+    /// one): the parcel MapServers rendered as outline tiles. All three layers
+    /// are outline-only (fill alpha 0) so they don't obscure the basemap, and
+    /// each has a min-scale floor (server returns blank when zoomed out, draws
+    /// boundaries when zoomed in). Service chosen per tile by location; Saratoga
+    /// & Bergen first so they win inside their counties over NY statewide.
+    static func boundaryOverlay() -> EsriExportOverlay {
+        EsriExportOverlay(services: [
+            .init(base: "https://spatialags.vhb.com/arcgis/rest/services/29820_Saratoga/NY_County_Saratoga/MapServer",
+                  op: "export",
+                  region: .init(minLat: 42.73, minLon: -74.06, maxLat: 43.32, maxLon: -73.50),
+                  extra: [URLQueryItem(name: "layers", value: "show:57")]),
+            .init(base: "https://bchapeweb.co.bergen.nj.us/arcgis/rest/services/parcelviewer_MIL1/MapServer",
+                  op: "export",
+                  region: .init(minLat: 40.84, minLon: -74.27, maxLat: 41.16, maxLon: -73.88),
+                  extra: [URLQueryItem(name: "layers", value: "show:1")]),
+            .init(base: "https://gisservices.its.ny.gov/arcgis/rest/services/NYS_Tax_Parcels_Public/MapServer",
+                  op: "export",
+                  region: .init(minLat: 40.40, minLon: -79.90, maxLat: 45.10, maxLon: -71.80),
+                  extra: [URLQueryItem(name: "layers", value: "show:1")])
+        ])
+    }
+
     static func lookup(at c: CLLocationCoordinate2D) async -> ParcelLookup {
         guard let cfg = parcelConfig(for: c) else { return .noCoverage }
         do {
