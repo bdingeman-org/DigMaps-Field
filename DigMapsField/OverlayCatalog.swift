@@ -20,7 +20,7 @@ struct CatalogHistoricMap: Decodable, Identifiable {
     let p: [[Double]]?    // geoMask footprint ring [[lng,lat],…]
     let county: String?   // "Saratoga, NY" — derived from center at build time; nil if unresolved
 
-    var yearLabel: String { (e == 1 ? "~" : "") + String(y) }
+    var yearLabel: String { y == 0 ? "n.d." : (e == 1 ? "~" : "") + String(y) }   // y==0 = undated
 
     /// center of the footprint bbox, for distance/grouping
     var center: CLLocationCoordinate2D? {
@@ -155,7 +155,9 @@ struct OverlayCatalog: Decodable {
         for m in historic(in: region) { buckets[m.county ?? "—", default: []].append(m) }
         return buckets.map { (key, maps) in
             let sorted = maps.sorted { a, b in
-                if a.y != b.y { return a.y < b.y }          // oldest → newest
+                let ay = a.y == 0 ? Int.max : a.y           // undated sink to the bottom
+                let by = b.y == 0 ? Int.max : b.y
+                if ay != by { return ay < by }              // dated oldest → newest
                 return footprint(a) < footprint(b)           // then most-local
             }
             let isOther = (key == "—")
