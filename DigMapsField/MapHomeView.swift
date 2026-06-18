@@ -176,6 +176,7 @@ struct MapHomeView: View {
                 routeCoords: routeCoords, routeKey: routeKey, routeFitToken: routeFitToken,
                 parcelMode: parcelMode, onMapTap: parcelTap,
                 parcelRings: parcelRings, parcelPoint: parcelPoint, parcelToken: parcelToken,
+                showParcelBoundaries: parcelMode,
                 onRegionChange: {
                     viewRegion = $0
                     aerialHistInView = HistoricAerial.forCenter($0.center)
@@ -261,7 +262,7 @@ struct MapHomeView: View {
             .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 6)
             searchBar
             if parcelMode {
-                Text("Parcel lookup on — tap any parcel on the map")
+                Text("Parcel lookup on — boundaries shown · tap one for the owner · zoom in if blank")
                     .font(Workshop.mono(10)).foregroundStyle(Workshop.bg)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
@@ -721,6 +722,7 @@ struct BaseMapView: UIViewRepresentable {
     var parcelRings: [[CLLocationCoordinate2D]]? = nil
     var parcelPoint: CLLocationCoordinate2D? = nil
     var parcelToken: Int = 0
+    var showParcelBoundaries: Bool = false
     var onRegionChange: ((MKCoordinateRegion) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -755,8 +757,19 @@ struct BaseMapView: UIViewRepresentable {
             co.renderer = nil
             co.currentOverlay = buildOverlay()
             if let o = co.currentOverlay { view.addOverlay(o, level: .aboveLabels) }
-            // keep the route line above freshly re-added tiles
+            // keep the parcel boundaries + route line above freshly re-added tiles
+            if let pb = co.parcelBoundaryOverlay { view.removeOverlay(pb); view.addOverlay(pb, level: .aboveLabels) }
             if let pl = co.routeOverlay { view.removeOverlay(pl); view.addOverlay(pl, level: .aboveLabels) }
+        }
+        if showParcelBoundaries != co.parcelBoundariesOn {
+            co.parcelBoundariesOn = showParcelBoundaries
+            if showParcelBoundaries {
+                let o = ParcelService.boundaryOverlay()
+                co.parcelBoundaryOverlay = o
+                view.addOverlay(o, level: .aboveLabels)
+            } else if let o = co.parcelBoundaryOverlay {
+                view.removeOverlay(o); co.parcelBoundaryOverlay = nil
+            }
         }
         co.renderer?.alpha = CGFloat(opacity)
         co.pendingAlpha = CGFloat(opacity)
@@ -841,6 +854,8 @@ struct BaseMapView: UIViewRepresentable {
         var onMapTap: ((CLLocationCoordinate2D) -> Void)?
         var parcelOverlays: [MKOverlay] = []
         var lastParcelToken = 0
+        var parcelBoundaryOverlay: MKTileOverlay?
+        var parcelBoundariesOn = false
 
         private static let gold = UIColor(red: 0xf0/255.0, green: 0xc0/255.0, blue: 0x62/255.0, alpha: 1)
         private static let goldFill = UIColor(red: 0xb8/255.0, green: 0x86/255.0, blue: 0x2c/255.0, alpha: 1)
@@ -910,6 +925,10 @@ struct BaseMapView: UIViewRepresentable {
             }
             if let tiles = overlay as? MKTileOverlay {
                 let r = MKTileOverlayRenderer(tileOverlay: tiles)
+                if tiles === parcelBoundaryOverlay {
+                    r.alpha = 1.0          // boundaries stay crisp, independent of the opacity slider
+                    return r               // (don't store as the slider-controlled renderer)
+                }
                 r.alpha = pendingAlpha
                 renderer = r
                 return r
