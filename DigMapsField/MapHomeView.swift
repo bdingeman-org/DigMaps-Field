@@ -63,7 +63,7 @@ struct MapHomeView: View {
     @State private var selectedFile: MapFile?
     @State private var aerialPick: AerialPick?
     @State private var aerialHistInView: [HistoricAerial] = []  // historic aerials covering the current map center
-    @State private var histInView: [CatalogHistoricMap] = []    // catalogued old maps covering the current map viewport
+    @State private var histGroups: [HistoricCountyGroup] = []   // catalogued old maps in view, grouped by county
     @State private var lidarSource: HillshadeSource = .state
     @State private var selectedHist: CatalogHistoricMap?
 
@@ -180,7 +180,7 @@ struct MapHomeView: View {
                 onRegionChange: {
                     viewRegion = $0
                     aerialHistInView = HistoricAerial.forCenter($0.center)
-                    histInView = OverlayCatalog.shared?.historic(in: $0) ?? []
+                    histGroups = OverlayCatalog.shared?.historicGroups(in: $0) ?? []
                     search.updateRegion($0)
                 }
             )
@@ -604,19 +604,23 @@ struct MapHomeView: View {
         NavigationStack {
             List {
                 // Driven only by the current map viewport (recomputed on every pan),
-                // never by GPS — so entries never appear that aren't in view.
-                if histInView.isEmpty {
+                // never by GPS. Grouped by county (nearest first), oldest→newest within.
+                if histGroups.isEmpty {
                     Text("No catalogued maps cover this view — pan the map.").foregroundStyle(.secondary)
                 }
-                ForEach(histInView) { m in
-                    Button {
-                        selectedHist = m; overlayOn = true; fitToken += 1; showHistSheet = false
-                    } label: {
-                        HStack {
-                            Text(m.yearLabel).font(Workshop.monoBold(14)).foregroundStyle(Workshop.gold)
-                            VStack(alignment: .leading) {
-                                Text(m.atlas).foregroundStyle(Workshop.cream).lineLimit(1)
-                                Text("\(m.src) · online").font(.caption).foregroundStyle(Workshop.creamDim)
+                ForEach(histGroups) { group in
+                    Section(header: Text(group.county).font(Workshop.monoBold(12)).foregroundStyle(Workshop.gold)) {
+                        ForEach(group.maps) { m in
+                            Button {
+                                selectedHist = m; overlayOn = true; fitToken += 1; showHistSheet = false
+                            } label: {
+                                HStack {
+                                    Text(m.yearLabel).font(Workshop.monoBold(14)).foregroundStyle(Workshop.gold)
+                                    VStack(alignment: .leading) {
+                                        Text(m.atlas).foregroundStyle(Workshop.cream).lineLimit(1)
+                                        Text("\(m.src) · online").font(.caption).foregroundStyle(Workshop.creamDim)
+                                    }
+                                }
                             }
                         }
                     }

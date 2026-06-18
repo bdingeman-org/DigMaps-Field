@@ -18,8 +18,15 @@ struct CatalogHistoricMap: Decodable, Identifiable {
     let src: String       // Rumsey / NYPL / …
     let b: [Double]       // bbox [w,s,e,n]
     let p: [[Double]]?    // geoMask footprint ring [[lng,lat],…]
+    let county: String?   // "Saratoga, NY" — derived from center at build time; nil if unresolved
 
     var yearLabel: String { (e == 1 ? "~" : "") + String(y) }
+
+    /// center of the footprint bbox, for distance/grouping
+    var center: CLLocationCoordinate2D? {
+        guard b.count == 4 else { return nil }
+        return CLLocationCoordinate2D(latitude: (b[1] + b[3]) / 2, longitude: (b[0] + b[2]) / 2)
+    }
 
     /// True footprint test (bbox envelopes of rotated sheets lie — see DigMaps build 28).
     func covers(_ c: CLLocationCoordinate2D) -> Bool {
@@ -133,6 +140,37 @@ struct OverlayCatalog: Decodable {
     func template(for map: CatalogHistoricMap) -> String {
         historicTileTemplate.replacingOccurrences(of: "{id}", with: map.id)
     }
+
+    /// In-view maps grouped by county: the county under your view leads (sections
+    /// ordered by nearness to the viewport center), each county sorted OLDEST→NEWEST.
+    /// Maps with no county fall into a trailing "Other maps" group.
+    func historicGroups(in region: MKCoordinateRegion) -> [HistoricCountyGroup] {
+        let center = region.center
+        func dist(_ m: CatalogHistoricMap) -> Double {
+            guard let c = m.center else { return .greatestFiniteMagnitude }
+            let dx = c.longitude - center.longitude, dy = c.latitude - center.latitude
+            return dx * dx + dy * dy
+        }
+        var buckets: [String: [CatalogHistoricMap]] = [:]
+        for m in historic(in: region) { buckets[m.county ?? "—", default: []].append(m) }
+        return buckets.map { (key, maps) in
+            let sorted = maps.sorted { a, b in
+                if a.y != b.y { return a.y < b.y }          // oldest → newest
+                return footprint(a) < footprint(b)           // then most-local
+            }
+            let isOther = (key == "—")
+            let near = isOther ? .greatestFiniteMagnitude : (sorted.map(dist).min() ?? .greatestFiniteMagnitude)
+            return HistoricCountyGroup(county: isOther ? "Other maps" : key, maps: sorted, nearness: near)
+        }
+        .sorted { $0.nearness < $1.nearness }                 // county under the view first
+    }
+}
+
+struct HistoricCountyGroup: Identifiable {
+    let county: String
+    let maps: [CatalogHistoricMap]
+    let nearness: Double
+    var id: String { county }
 }
 
 /// What MapScreen renders: an offline file or an online tile template.
