@@ -61,9 +61,11 @@ enum OverlayFactory {
     }
 
     static func historic(_ m: CatalogHistoricMap, catalog: OverlayCatalog) -> MKTileOverlay {
-        let o = MKTileOverlay(urlTemplate: catalog.template(for: m))
+        // mapwarper (and any external) maps carry their own {z}/{x}/{y} template in `t`;
+        // everything else routes through the R2/Worker template (Allmaps render).
+        let o = MKTileOverlay(urlTemplate: m.t ?? catalog.template(for: m))
         o.canReplaceMapContent = false
-        o.maximumZ = 16
+        o.maximumZ = m.nz ?? 16   // upscale past native zoom rather than fetch tiles we never rendered
         return o
     }
 }

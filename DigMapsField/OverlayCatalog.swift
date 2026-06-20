@@ -19,6 +19,8 @@ struct CatalogHistoricMap: Decodable, Identifiable {
     let b: [Double]       // bbox [w,s,e,n]
     let p: [[Double]]?    // geoMask footprint ring [[lng,lat],…]
     let county: String?   // "Saratoga, NY" — derived from center at build time; nil if unresolved
+    let t: String?        // explicit tile template (e.g. mapwarper.net) — overrides the Allmaps/Worker path
+    let nz: Int?          // native max zoom — overlay upscales past this instead of requesting un-rendered tiles
 
     var yearLabel: String { y == 0 ? "n.d." : (e == 1 ? "~" : "") + String(y) }   // y==0 = undated
 
