@@ -22,6 +22,7 @@ struct CatalogHistoricMap: Decodable, Identifiable {
     let t: String?        // explicit tile template (e.g. mapwarper.net) — overrides the Allmaps/Worker path
     let nz: Int?          // native max zoom — overlay upscales past this instead of requesting un-rendered tiles
     let g: Int?           // control-point count — more = better-anchored/more precise warp; prefer high-g copies
+    let h: Bool?          // shows individual houses (cadastral: landowner/atlas/Sanborn) vs not (topo/regional)
 
     /// Anchor quality for ranking: a mapwarper (t) map is its own georeference
     /// (trusted); otherwise the GCP count (more = more precise).
@@ -193,6 +194,19 @@ struct HistoricCountyGroup: Identifiable {
     let maps: [CatalogHistoricMap]
     let nearness: Double
     var id: String { county }
+}
+
+/// Old-maps list filter: cadastral maps that show individual houses vs maps that don't.
+enum HouseFilter: String, CaseIterable, Identifiable {
+    case all, houses, no
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .all:    return "All"
+        case .houses: return "Shows houses"
+        case .no:     return "No houses"
+        }
+    }
 }
 
 /// What MapScreen renders: an offline file or an online tile template.

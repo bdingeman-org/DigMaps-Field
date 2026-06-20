@@ -64,6 +64,7 @@ struct MapHomeView: View {
     @State private var aerialPick: AerialPick?
     @State private var aerialHistInView: [HistoricAerial] = []  // historic aerials covering the current map center
     @State private var histGroups: [HistoricCountyGroup] = []   // catalogued old maps in view, grouped by county
+    @State private var histFilter: HouseFilter = .all           // shows-houses / no-houses filter for the list
     @State private var lidarSource: HillshadeSource = .state
     @State private var selectedHist: CatalogHistoricMap?
 
@@ -608,15 +609,31 @@ struct MapHomeView: View {
 
     // MARK: sheets
 
+    /// Old-maps list filtered by the house/no-house toggle. Untagged maps (h == nil)
+    /// appear only under "All". Empty county groups are dropped.
+    private var filteredHistGroups: [HistoricCountyGroup] {
+        guard histFilter != .all else { return histGroups }
+        let want = (histFilter == .houses)
+        return histGroups.compactMap { g in
+            let maps = g.maps.filter { $0.h == want }
+            return maps.isEmpty ? nil : HistoricCountyGroup(county: g.county, maps: maps, nearness: g.nearness)
+        }
+    }
+
     private var histSheet: some View {
         NavigationStack {
             List {
+                Picker("Map type", selection: $histFilter) {
+                    ForEach(HouseFilter.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .listRowBackground(Color.clear)
                 // Driven only by the current map viewport (recomputed on every pan),
                 // never by GPS. Grouped by county (nearest first), oldest→newest within.
-                if histGroups.isEmpty {
+                if filteredHistGroups.isEmpty {
                     Text("No catalogued maps cover this view — pan the map.").foregroundStyle(.secondary)
                 }
-                ForEach(histGroups) { group in
+                ForEach(filteredHistGroups) { group in
                     Section(header: Text(group.county).font(Workshop.monoBold(12)).foregroundStyle(Workshop.gold)) {
                         ForEach(group.maps) { m in
                             Button {
