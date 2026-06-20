@@ -182,6 +182,14 @@ struct MapHomeView: View {
                     aerialHistInView = HistoricAerial.forCenter($0.center)
                     histGroups = OverlayCatalog.shared?.historicGroups(in: $0) ?? []
                     search.updateRegion($0)
+                    // Follow the chosen atlas town-to-town: if the current historic
+                    // overlay no longer covers the view, swap to the same atlas+year's
+                    // plate that does — no need to re-pick from the list.
+                    if overlayOn, src == .hist, let cur = selectedHist, !cur.covers($0.center),
+                       let next = OverlayCatalog.shared?.plate(atlas: cur.atlas, year: cur.y, covering: $0.center),
+                       next.id != cur.id {
+                        selectedHist = next
+                    }
                 }
             )
             .ignoresSafeArea()

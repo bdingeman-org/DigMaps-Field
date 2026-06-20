@@ -21,6 +21,11 @@ struct CatalogHistoricMap: Decodable, Identifiable {
     let county: String?   // "Saratoga, NY" — derived from center at build time; nil if unresolved
     let t: String?        // explicit tile template (e.g. mapwarper.net) — overrides the Allmaps/Worker path
     let nz: Int?          // native max zoom — overlay upscales past this instead of requesting un-rendered tiles
+    let g: Int?           // control-point count — more = better-anchored/more precise warp; prefer high-g copies
+
+    /// Anchor quality for ranking: a mapwarper (t) map is its own georeference
+    /// (trusted); otherwise the GCP count (more = more precise).
+    var anchors: Int { t != nil ? 12 : (g ?? 0) }
 
     var yearLabel: String { y == 0 ? "n.d." : (e == 1 ? "~" : "") + String(y) }   // y==0 = undated
 
@@ -81,9 +86,14 @@ struct OverlayCatalog: Decodable {
     /// the list with identical-looking rows, and surfaces the map under your view.
     private func collapseAndRank(_ candidates: [CatalogHistoricMap],
                                  center: CLLocationCoordinate2D) -> [CatalogHistoricMap] {
+        // Among copies of the same plate, prefer one that covers the spot, then a
+        // TPS-precise copy (≥6 control points) over an affine one, then the most
+        // local footprint. Fixes auto-picking a sparse 3-GCP copy over a 20-GCP one.
         func better(_ a: CatalogHistoricMap, _ b: CatalogHistoricMap) -> Bool {
             let ac = a.covers(center), bc = b.covers(center)
             if ac != bc { return ac }
+            let ap = a.anchors >= 6, bp = b.anchors >= 6
+            if ap != bp { return ap }
             return footprint(a) < footprint(b)
         }
         var best: [String: CatalogHistoricMap] = [:]
@@ -95,6 +105,8 @@ struct OverlayCatalog: Decodable {
         return best.values.sorted { a, b in
             let ac = a.covers(center), bc = b.covers(center)
             if ac != bc { return ac }
+            let ap = a.anchors >= 6, bp = b.anchors >= 6
+            if ap != bp { return ap }
             let fa = footprint(a), fb = footprint(b)
             if fa != fb { return fa < fb }
             return a.y > b.y
@@ -141,6 +153,12 @@ struct OverlayCatalog: Decodable {
 
     func template(for map: CatalogHistoricMap) -> String {
         historicTileTemplate.replacingOccurrences(of: "{id}", with: map.id)
+    }
+
+    /// The best plate of a given atlas+year covering a point — for "follow the
+    /// atlas as you pan town to town" without re-picking from the list.
+    func plate(atlas: String, year: Int, covering c: CLLocationCoordinate2D) -> CatalogHistoricMap? {
+        collapseAndRank(maps.filter { $0.atlas == atlas && $0.y == year && $0.covers(c) }, center: c).first
     }
 
     /// In-view maps grouped by county: the county under your view leads (sections
