@@ -81,6 +81,7 @@ struct OverlayCatalog: Decodable {
         return (m.b[2] - m.b[0]) * (m.b[3] - m.b[1])
     }
 
+
     /// Collapse multi-plate atlases to the plate that best covers `center`, then
     /// rank: plates covering the center first, then smaller (more local) footprint,
     /// then newer. Stops one atlas (e.g. a 26-plate Beers county atlas) from filling
@@ -95,6 +96,11 @@ struct OverlayCatalog: Decodable {
             if ac != bc { return ac }
             let ap = a.anchors >= 6, bp = b.anchors >= 6
             if ap != bp { return ap }
+            // More control points = better-anchored warp. Critical for points near a
+            // tiny inset's edge, where TPS extrapolates wildly: Stillwater village sits
+            // at the top edge of the 10-pt Beers inset (df857) but mid-net in the 20-pt
+            // township (cf45b), so prefer the higher-anchor copy before the smaller one.
+            if a.anchors != b.anchors { return a.anchors > b.anchors }
             return footprint(a) < footprint(b)
         }
         var best: [String: CatalogHistoricMap] = [:]
@@ -108,6 +114,9 @@ struct OverlayCatalog: Decodable {
             if ac != bc { return ac }
             let ap = a.anchors >= 6, bp = b.anchors >= 6
             if ap != bp { return ap }
+            // list order stays local-first (small footprint); anchor-count is only a
+            // within-atlas collapse tiebreak in better(), not a global ranking signal
+            // (else huge high-GCP continental maps would float to the top of the list).
             let fa = footprint(a), fb = footprint(b)
             if fa != fb { return fa < fb }
             return a.y > b.y
