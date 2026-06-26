@@ -54,18 +54,24 @@ enum OverlayFactory {
     }
 
     static func aerial(_ a: CatalogAerial) -> MKTileOverlay {
-        let o = MKTileOverlay(urlTemplate: a.template)
+        // overzoom past the source's deepest level so the layer stays visible when
+        // you zoom in (plain MKTileOverlay would vanish past maximumZ).
+        let o = OverzoomTileOverlay(urlTemplate: a.template, nativeMax: a.maxZ)
         o.canReplaceMapContent = false
-        o.maximumZ = a.maxZ
+        o.maximumZ = 22
         return o
     }
 
     static func historic(_ m: CatalogHistoricMap, catalog: OverlayCatalog) -> MKTileOverlay {
         // mapwarper (and any external) maps carry their own {z}/{x}/{y} template in `t`;
         // everything else routes through the R2/Worker template (Allmaps render).
-        let o = MKTileOverlay(urlTemplate: m.t ?? catalog.template(for: m))
+        // OverzoomTileOverlay keeps the map present at deep zoom: tiles up to nativeMax
+        // come from R2/Worker, deeper ones are upscaled from the nativeMax ancestor —
+        // so the overlay never disappears as you zoom in (the field's whole point).
+        let o = OverzoomTileOverlay(urlTemplate: m.t ?? catalog.template(for: m),
+                                    nativeMax: m.nz ?? 16)
         o.canReplaceMapContent = false
-        o.maximumZ = m.nz ?? 16   // upscale past native zoom rather than fetch tiles we never rendered
+        o.maximumZ = 22
         return o
     }
 }
