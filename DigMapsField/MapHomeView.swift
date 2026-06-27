@@ -466,10 +466,15 @@ struct MapHomeView: View {
             HStack(spacing: 4) {
                 ForEach(SrcKind.tabs) { k in
                     Button {
+                        // deselectable: tapping the active, showing source removes the overlay
+                        if src == k && overlayOn {
+                            overlayOn = false
+                            return
+                        }
                         src = k
                         switch k {
                         case .oldmap: if store.maps.isEmpty { showImporter = true } else { overlayOn = true; if selectedFile == nil { selectedFile = store.maps.first }; if store.maps.count > 1 { showFileSheet = true } }
-                        case .hist:   showHistSheet = true
+                        case .hist:   if selectedHist != nil { overlayOn = true } else { showHistSheet = true }
                         case .aerial: overlayOn = true; if aerialPick == nil { aerialPick = (catalog?.aerials["NYS orthos"]?.last).map(AerialPick.modern) }
                         case .lidar:  overlayOn = true
                         }
@@ -477,8 +482,8 @@ struct MapHomeView: View {
                         Text(k.rawValue)
                             .font(Workshop.monoBold(12))
                             .padding(.vertical, 7).frame(maxWidth: .infinity)
-                            .background(src == k ? Workshop.gold : Workshop.panel)
-                            .foregroundStyle(src == k ? Workshop.bg : Workshop.creamDim)
+                            .background(src == k && overlayOn ? Workshop.gold : Workshop.panel)
+                            .foregroundStyle(src == k && overlayOn ? Workshop.bg : Workshop.creamDim)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
