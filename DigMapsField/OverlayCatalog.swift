@@ -26,7 +26,7 @@ struct CatalogHistoricMap: Decodable, Identifiable {
 
     /// Anchor quality for ranking: a mapwarper (t) map is its own georeference
     /// (trusted); otherwise the GCP count (more = more precise).
-    var anchors: Int { t != nil ? 12 : (g ?? 0) }
+    var anchors: Int { g ?? (t != nil ? 12 : 0) }
 
     var yearLabel: String { y == 0 ? "n.d." : (e == 1 ? "~" : "") + String(y) }   // y==0 = undated
 
